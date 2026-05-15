@@ -323,6 +323,57 @@ def test_upgrade_tools_with_push_rejects_when_origin_non_fast_forward(
     assert not wt_path.exists()
 
 
+def test_upgrade_tools_exits_clean_when_every_bump_conflicts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The canonical shape: PyPI has a newer version, but the per-pin
+    # sweep can't land it together with the existing pin set (e.g.
+    # mdformat 1.0 capped by mdformat-tables<0.8). The resolver
+    # returns accepted=[] + skipped=[bump]; the command should print
+    # the status, clean up worktree + branch, and exit SUCCESS.
+    pinned = dict(
+        cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
+    )
+    current_ruff = pinned["ruff"]
+    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
+    _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
+
+    bumps = [("ruff", "0.5.0", current_ruff)]
+
+    def fake_resolve(
+        **_: object,
+    ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+        return ([], list(bumps))
+
+    monkeypatch.setattr(cli, "_resolve_compatible_bumps", fake_resolve)
+    capsys.readouterr()
+
+    exit_code = _run_cli(["upgrade-tools", "--only", "ruff"])
+    assert exit_code == ExitCode.SUCCESS
+
+    out = capsys.readouterr().out
+    assert "no upstream-compatible bumps available this run" in out
+    assert "skipped (conflict): ruff 0.5.0" in out
+
+    bump_hash = cli._tool_bump_hash(bumps)
+    wt_path = clone / ".wt" / f"repo-shared-tool-bump-{bump_hash}"
+    assert not wt_path.exists()
+    branch_check = subprocess.run(
+        [
+            "git",
+            "rev-parse",
+            "--verify",
+            f"refs/heads/repo-shared/tool-bump-{bump_hash}",
+        ],
+        cwd=clone,
+        capture_output=True,
+    )
+    assert branch_check.returncode != 0, "bump branch should be deleted"
+
+
 def test_upgrade_tools_dogfood_failure_leaves_worktree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

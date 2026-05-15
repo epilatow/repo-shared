@@ -132,8 +132,10 @@ resolver falls back to a per-pin sweep in pyproject order. Each bump is kept
 iff it locks together with the already-accepted set, and dropped otherwise.
 Dropped pins are reported as `skipped (conflict): <name> <old> -> <new>` and
 the non-conflicting bumps still land in the commit. If every candidate
-conflicts, the worktree is restored to its pre-bump state and the run exits
-with an error so the maintainer can investigate.
+conflicts, the worktree + branch are removed and the run exits cleanly --
+there's nothing the maintainer can do until the blocking upstream catches up
+(in the canonical shape above, until `mdformat-tables` drops its cap), and
+nightly automation should shrug at the situation rather than page.
 
 The subcommand is hidden from the consumer-shipped `--help` output (the same
 CLI module ships in every consumer's venv, but the subcommand only makes sense

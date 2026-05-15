@@ -658,7 +658,12 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
 
     Cheap no-op: if PyPI has no bumps available for any pinned
     tool, the command exits early with no worktree, branch, or
-    state-change. Safe for nightly automation.
+    state-change. The conflict-only case (every candidate bump
+    blocked by an existing pin's constraint -- see
+    ``_resolve_compatible_bumps``) is a second cheap no-op with
+    the same external shape: worktree + branch removed, no commit
+    landed, ``ExitCode.SUCCESS``. Both shapes are safe for nightly
+    automation.
 
     Maintainer-only -- a runtime guard via
     ``_running_from_local_repo_shared()`` rejects invocation from
@@ -782,11 +787,20 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
         for name, old, new in skipped:
             print(f"  skipped (conflict): {name} {old} -> {new}")
         if not accepted:
-            _eprint(
-                "every candidate bump conflicts with the existing "
-                f"pin set; worktree {wt_path} kept for inspection."
+            # No accepted bumps means pyproject is back at its
+            # pre-bump state with nothing for the maintainer to
+            # inspect, so the worktree + branch are removed and the
+            # run exits SUCCESS for nightly automation's sake. The
+            # next run re-queries PyPI and picks up any release that
+            # has since become installable against the existing pins.
+            print(
+                "no upstream-compatible bumps available this run "
+                "(every candidate conflicts with the existing pin "
+                "set); re-run after the blocking upstream catches up."
             )
-            return ExitCode.SUBPROCESS
+            _remove_worktree(repo_root, wt_path)
+            _delete_branch(repo_root, branch)
+            return ExitCode.SUCCESS
         bumps = accepted
     else:
         print(f"resuming existing bump worktree at {wt_path}.")
