@@ -9,16 +9,16 @@ conventions, plus a pytest suite that enforces them on every test run.
 ### Docs and configs
 
 A canonical set of cross-repo conventions, dropped into the consumer's repo
-root. The master content lives under `shared/` here and is vendored into the
+root. The upstream content lives under `shared/` here and is vendored into the
 consumer at `_repo_shared/<kind>/`. Most consumer-visible paths are symlinks
 into the vendored tree, so the canonical content stays updateable in one place.
 A couple of paths -- `CLAUDE.md` and `.gitignore` -- ship as real-file copies
 instead: `git` won't follow a symlinked `.gitignore`, and Claude resolves
 `CLAUDE.md`'s `@`-includes relative to the file's real on-disk location.
-`upgrade` auto-carries a master update into any template copy you haven't
+`upgrade` auto-carries a upstream update into any template copy you haven't
 customized.
 
-Every canonical path is expected to be in sync with its master -- a correct
+Every canonical path is expected to be in sync with its upstream -- a correct
 symlink, or a byte-matching template copy. `init` and `upgrade` enumerate every
 out-of-sync entry and abort with `ERROR` (exit code 4) listing them all, and
 the delivered `test_in_sync.py` gates the same invariant on every test run. To
@@ -48,7 +48,7 @@ A pytest suite that runs as part of `uv run pytest` and enforces a consistent
 quality bar across every consumer: Python lint + format + strict type-check,
 markdown format + lint. Two smaller gates cover integration sanity -- that the
 consumer's vendored copy hasn't been hand-edited, and that the canonical paths
-still resolve to their masters.
+still resolve to their upstreams.
 
 The delivered test files live under the consumer's vendored
 `_repo_shared/tests/` directory; init injects a `testpaths` entry into
@@ -93,11 +93,11 @@ Plus the two integration sanity checks:
 
 - **`test_repo_shared_drift.py`** -- catches local edits to the vendored
   `_repo_shared/` tree by comparing it against the SHA-pinned package version.
-- **`test_in_sync.py`** -- verifies every canonical path matches its master. An
-  out-of-sync entry is either a symlink-kind path shadowed by a local file, or
-  a template-kind copy that's drifted from the master. `init` and `upgrade`
-  enforce the same invariant up front and abort with `ERROR` before they touch
-  your tree.
+- **`test_in_sync.py`** -- verifies every canonical path matches its upstream.
+  An out-of-sync entry is either a symlink-kind path shadowed by a local file,
+  or a template-kind copy that's drifted from the upstream. `init` and
+  `upgrade` enforce the same invariant up front and abort with `ERROR` before
+  they touch your tree.
 
 The ruff, mypy, and mdformat versions are pinned in repo-shared's own
 `pyproject.toml` and ride along when the consumer pins repo-shared by SHA.

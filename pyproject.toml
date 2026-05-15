@@ -36,7 +36,7 @@ packages = ["src/epilatow_repo_shared"]
 # The package directory contains a symlink at
 # ``src/epilatow_repo_shared/_shared`` pointing back to ``shared/`` at
 # the repo root. Hatchling follows the symlink during the wheel build,
-# which makes the master content reachable via ``importlib.resources``
+# which makes the upstream content reachable via ``importlib.resources``
 # both in editable installs (real-time symlink) and in wheel installs
 # (resolved copies).
 

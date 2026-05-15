@@ -10,7 +10,7 @@ file takes precedence over `DEVELOPMENT_SHARED.md` on conflict.**
 
 Two top-level concerns:
 
-- `shared/` is the master content that gets vendored into consumer repos. It
+- `shared/` is the upstream content that gets vendored into consumer repos. It
   has different kinds, each handled by `vendor.py`'s `iter_shared` /
   `consumer_paths`:
   - `shared/files/` -> vendored at `_repo_shared/files/` PLUS canonical-path
@@ -22,15 +22,15 @@ Two top-level concerns:
   - `shared/templates/` and `shared/dottemplates/` -> vendored at
     `_repo_shared/<kind>/` PLUS a canonical-path *copy* (not a symlink) that
     `vendor()` seeds when the consumer has no file there. On a later `upgrade`
-    the copy is refreshed to the new master only while it still byte-matches
-    the *old* master (the previous vendored content) -- so a repo that never
+    the copy is refreshed to the new upstream only while it still byte-matches
+    the *old* upstream (the previous vendored content) -- so a repo that never
     customizes the file keeps getting the latest version, while a customized
     copy is left untouched. Used for files the consumer must own a real copy
     of: `gitignore` (`git` won't follow a symlinked `.gitignore`) and
     `CLAUDE.md` (Claude resolves `@`-includes relative to the file's real
     on-disk location, so a symlinked `CLAUDE.md` would resolve its includes
     against the vendor dir). The delivered `test_in_sync.py` gates each copy
-    against its master so a customized copy can't silently fall behind
+    against its upstream so a customized copy can't silently fall behind
     unnoticed; `init` / `upgrade` enforce the same invariant up front via
     `check_in_sync` and abort with ERROR on any out-of-sync entry. A consumer
     that wants its own version lists the path in `.repo-shared-ignore`, which
@@ -52,17 +52,17 @@ Two top-level concerns:
 The repo's own root-level files dogfood the same mechanism: the symlinked kinds
 (`DEVELOPMENT_SHARED.md`, `.markdownlint.json`, ...) are symlinks into
 `shared/`, while `CLAUDE.md` and `.gitignore` are real committed copies of
-their `shared/templates/` / `shared/dottemplates/` masters. Editing a symlinked
-master under `shared/` updates the repo-local view as a side effect; the
-template copies are independent committed files, gated against their masters by
-the delivered `test_in_sync.py` -- `InSyncBase` calls `check_in_sync` against
-`package_shared_root()`, which resolves to the live `shared/` here, so
-repo-shared dogfoods the same check every consumer runs.
+their `shared/templates/` / `shared/dottemplates/` upstreams. Editing a
+symlinked upstream under `shared/` updates the repo-local view as a side
+effect; the template copies are independent committed files, gated against
+their upstreams by the delivered `test_in_sync.py` -- `InSyncBase` calls
+`check_in_sync` against `package_shared_root()`, which resolves to the live
+`shared/` here, so repo-shared dogfoods the same check every consumer runs.
 
 Repo-local files that are NOT shared (`README.md`, this file) are real files at
-the root. `DEVELOPMENT.md` is also a real file -- the `shared/files/` master is
-a placeholder template -- so the repo's own `.repo-shared-ignore` lists it to
-opt the canonical path out of the in-sync gate. `DEVELOPMENT_AGENT.md` keeps
+the root. `DEVELOPMENT.md` is also a real file -- the `shared/files/` upstream
+is a placeholder template -- so the repo's own `.repo-shared-ignore` lists it
+to opt the canonical path out of the in-sync gate. `DEVELOPMENT_AGENT.md` keeps
 the symlink to the shared placeholder since this repo has no agent-only
 specifics worth promoting to a real file.
 

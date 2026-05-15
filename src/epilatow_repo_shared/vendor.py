@@ -19,8 +19,8 @@ Path-mapping rules (from the source-of-truth in repo-shared's
   vendor the same way (real file under ``_repo_shared/<kind>/<rel>``),
   but the canonical-path entry is *copied*, not symlinked: it is
   seeded when the consumer has no file there, and on a later
-  ``upgrade`` it is refreshed to the new master only while it still
-  byte-matches the *old* master -- i.e. the consumer never customized
+  ``upgrade`` it is refreshed to the new upstream only while it still
+  byte-matches the *old* upstream -- i.e. the consumer never customized
   it. Once customized it is left alone (never overwritten, never
   removed by cleanup). ``dottemplates`` dot-prefixes the canonical
   path the way ``dotfiles`` does. Used for files the consumer must
@@ -172,9 +172,9 @@ class VendorResult:
     - ``seeded``: canonical-path copies newly written this run
       (``templates`` / ``dottemplates`` kinds) -- the consumer owns
       the copy thereafter.
-    - ``updated``: template copies refreshed to the new master this
+    - ``updated``: template copies refreshed to the new upstream this
       run because the consumer's copy still byte-matched the *old*
-      master (it had not been customized), so the master update is
+      upstream (it had not been customized), so the upstream update is
       carried forward. A customized copy is never auto-updated -- it
       lands in ``out_of_sync`` instead.
     - ``skipped_ignored``: canonical-path entries not created because the
@@ -182,10 +182,10 @@ class VendorResult:
       opt-out -- consumer is free to have their own file at that path,
       or no file at all).
     - ``out_of_sync``: every canonical-path entry the run could not
-      bring into agreement with the master, with a per-entry reason.
+      bring into agreement with the upstream, with a per-entry reason.
       Covers both kinds uniformly: a symlink-kind path shadowed by a
       local file or pointing at the wrong target, and a template-kind
-      copy whose content has drifted from the master. ``init`` and
+      copy whose content has drifted from the upstream. ``init`` and
       ``upgrade`` treat any non-empty list as an error and surface
       every entry at once -- no whack-a-mole. ``.repo-shared-ignore``
       exempts a path from this check.
@@ -212,7 +212,7 @@ def _copy_file(src: Path, dest: Path) -> None:
     shutil.copyfile(src, dest)
     mode = src.stat().st_mode & 0o7777
     # Wheels do not preserve the exec bit, so files marked executable
-    # in the master tree come back as 0o644 once uv installs them.
+    # in the upstream tree come back as 0o644 once uv installs them.
     # Detect a shebang line and force the exec bit on so the wrapper
     # script under ``_repo_shared/files/_repo_shared/repo-shared`` is
     # actually executable in the consumer.
@@ -260,16 +260,16 @@ def _read_ignore_file(consumer_root: Path) -> set[str]:
 
 
 def check_in_sync(consumer_root: Path) -> list[tuple[Path, str]]:
-    """List canonical-path entries that are out of sync with the master.
+    """List canonical-path entries that are out of sync with the upstream.
 
     Walks the package's shared content; for each entry (skipping the
     ``tests`` kind and any path listed in ``.repo-shared-ignore``):
 
     - Symlink kinds (``files`` / ``dotfiles``): the canonical path
       must be a symlink and the content it resolves to must
-      byte-match the master.
+      byte-match the upstream.
     - Template kinds (``templates`` / ``dottemplates``): the canonical
-      path must be a real file whose content byte-matches the master.
+      path must be a real file whose content byte-matches the upstream.
 
     Content comparison is used in both branches so repo-shared can
     dogfood the same check on its own clone -- there the symlinks
@@ -311,11 +311,11 @@ def check_in_sync(consumer_root: Path) -> list[tuple[Path, str]]:
                 continue
             if current != _src.read_bytes():
                 violations.append(
-                    (link_path, "template copy out of sync with master")
+                    (link_path, "template copy out of sync with upstream")
                 )
             continue
         # Symlink kind: must be a symlink whose resolved content
-        # matches the master.
+        # matches the upstream.
         if not link_path.is_symlink():
             if link_path.exists():
                 violations.append(
@@ -336,7 +336,7 @@ def check_in_sync(consumer_root: Path) -> list[tuple[Path, str]]:
             continue
         if target_content != _src.read_bytes():
             violations.append(
-                (link_path, "symlink target does not match the master")
+                (link_path, "symlink target does not match the upstream")
             )
     return violations
 
@@ -359,11 +359,11 @@ def vendor(consumer_root: Path) -> VendorResult:
       flags it.
     - **Template kind (``templates`` / ``dottemplates``)**: seed the
       copy when the canonical path is empty. If a copy is already
-      there, byte-match against the master to decide:
+      there, byte-match against the upstream to decide:
 
-      * matches the new master -> in sync, nothing to do;
-      * matches the *old* master (the pre-overwrite vendored
-        content) -> consumer never customized it, carry the master
+      * matches the new upstream -> in sync, nothing to do;
+      * matches the *old* upstream (the pre-overwrite vendored
+        content) -> consumer never customized it, carry the upstream
         update forward (``updated``);
       * matches neither -> customized; leave untouched, again to be
         flagged by ``check_in_sync``.
@@ -381,16 +381,16 @@ def vendor(consumer_root: Path) -> VendorResult:
 
     for kind, src, rel in iter_shared(shared_root):
         vendor_path, link_path = consumer_paths(consumer_root, kind, rel)
-        # Capture the old master (the previous vendored content)
+        # Capture the old upstream (the previous vendored content)
         # before any write. The template branch uses it to tell a
         # consumer still on the old template (safe to auto-update)
-        # from one who has customized their copy. The new master
+        # from one who has customized their copy. The new upstream
         # write to ``vendor_path`` is deferred to the bottom of this
         # iteration so a crash partway through leaves the operation
-        # restartable: if the canonical-path copy gets the new master
+        # restartable: if the canonical-path copy gets the new upstream
         # but the process dies before ``vendor_path`` is updated, the
         # next run reads the still-old ``prev_vendored``, sees the
-        # canonical copy already matches the new master, and just
+        # canonical copy already matches the new upstream, and just
         # finishes the deferred write.
         prev_vendored: bytes | None = (
             vendor_path.read_bytes()
@@ -417,15 +417,15 @@ def vendor(consumer_root: Path) -> VendorResult:
                         current = link_path.read_bytes()
                     except OSError:
                         current = None
-                    new_master = src.read_bytes()
+                    new_upstream = src.read_bytes()
                     if (
-                        current != new_master
+                        current != new_upstream
                         and current is not None
                         and current == prev_vendored
                     ):
                         # The consumer is still on the old template
                         # and has not customized it, so carry the
-                        # master update forward.
+                        # upstream update forward.
                         _copy_file(src, link_path)
                         result.updated.append(link_path)
                     # else: already in sync, or drifted (left for
@@ -442,7 +442,7 @@ def vendor(consumer_root: Path) -> VendorResult:
                 # symlink) shadowing the canonical path -- left for
                 # ``check_in_sync`` to record.
 
-        # Write the new master to ``vendor_path`` last (see the
+        # Write the new upstream to ``vendor_path`` last (see the
         # restartability comment above).
         _copy_file(src, vendor_path)
         result.vendored.append(vendor_path)
@@ -618,14 +618,14 @@ class VendorDriftBase:
 
 
 class InSyncBase:
-    """Assert every canonical-path entry matches its shared master.
+    """Assert every canonical-path entry matches its shared upstream.
 
     Drives ``check_in_sync``, which checks both kinds uniformly:
 
     - Symlink kinds (``files`` / ``dotfiles``) must resolve to the
       vendored copy under ``_repo_shared/<kind>/``.
     - Template kinds (``templates`` / ``dottemplates``) must byte-match
-      the master.
+      the upstream.
 
     ``.repo-shared-ignore`` exempts a path from the check. The base
     needs no source-root skip: ``check_in_sync`` compares against
@@ -640,14 +640,14 @@ class InSyncBase:
         violations = check_in_sync(self.consumer_root)
         assert not violations, (
             "canonical-path entries out of sync with the shared "
-            "masters:\n"
+            "upstreams:\n"
             + "\n".join(
                 f"  - {p.relative_to(self.consumer_root)}: {reason}"
                 for p, reason in violations
             )
             + "\n\nFor a symlink kind: delete the shadowing file (or "
             "fix the symlink) and re-run ``init`` / ``upgrade``. For "
-            "a template kind: copy the master from "
+            "a template kind: copy the upstream from "
             "``_repo_shared/<kind>/<rel>`` over your copy. To keep "
             "your own version of an entry, list its path in "
             "``.repo-shared-ignore``."

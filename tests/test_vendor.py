@@ -402,7 +402,7 @@ def test_vendor_leaves_preexisting_template_untouched(
 ) -> None:
     """A pre-existing customized template copy lands in ``out_of_sync``.
 
-    The consumer's copy doesn't byte-match the master and isn't
+    The consumer's copy doesn't byte-match the upstream and isn't
     ignored, so ``check_in_sync`` flags it -- the unified divergence
     bucket ``init`` / ``upgrade`` surface as an error.
     """
@@ -436,17 +436,17 @@ def test_vendor_template_copy_not_overwritten_on_second_run(
 
 
 def test_vendor_in_sync_template_not_flagged(tmp_path: Path) -> None:
-    """A pre-existing copy still matching the master is silently OK.
+    """A pre-existing copy still matching the upstream is silently OK.
 
     Only a *drifted* template lands in ``out_of_sync``; one that
-    byte-matches the master (the steady state after a clean seed, or
+    byte-matches the upstream (the steady state after a clean seed, or
     a re-run) is in sync and reported nowhere.
     """
     shared = tmp_path / "shared"
     consumer = tmp_path / "consumer"
     consumer.mkdir()
     _make_synthetic_shared(shared)
-    _vendor_against(shared, consumer)  # seeds PROJECT.md from master
+    _vendor_against(shared, consumer)  # seeds PROJECT.md from upstream
 
     result = _vendor_against(shared, consumer)  # re-run, copy in sync
 
@@ -457,13 +457,13 @@ def test_vendor_in_sync_template_not_flagged(tmp_path: Path) -> None:
     assert project not in result.updated
 
 
-def test_vendor_updates_unmodified_template_to_new_master(
+def test_vendor_updates_unmodified_template_to_new_upstream(
     tmp_path: Path,
 ) -> None:
-    """A consumer still on the old master adopts the master update.
+    """A consumer still on the old upstream adopts the upstream update.
 
-    Seed PROJECT.md, change the master, re-vendor. The consumer never
-    touched their copy (it still byte-matches the old master), so
+    Seed PROJECT.md, change the upstream, re-vendor. The consumer never
+    touched their copy (it still byte-matches the old upstream), so
     ``vendor()`` carries the update forward into the canonical copy.
     """
     shared = tmp_path / "shared"
@@ -483,13 +483,13 @@ def test_vendor_updates_unmodified_template_to_new_master(
     assert project not in result.seeded
 
 
-def test_vendor_keeps_customized_template_on_master_change(
+def test_vendor_keeps_customized_template_on_upstream_change(
     tmp_path: Path,
 ) -> None:
-    """A customized copy is left alone even when the master changes.
+    """A customized copy is left alone even when the upstream changes.
 
     The consumer edited their copy, so it no longer matches the old
-    master; ``vendor()`` must not clobber it, and reports it as
+    upstream; ``vendor()`` must not clobber it, and reports it as
     drifted rather than updated.
     """
     shared = tmp_path / "shared"
@@ -508,18 +508,18 @@ def test_vendor_keeps_customized_template_on_master_change(
     assert project not in result.updated
 
 
-def test_vendor_resumes_when_canonical_copy_already_at_new_master(
+def test_vendor_resumes_when_canonical_copy_already_at_new_upstream(
     tmp_path: Path,
 ) -> None:
     """Crash between canonical-copy write and vendor_path write -> retry.
 
     ``vendor()`` writes the canonical-path copy before the vendored
-    master under ``_repo_shared/<kind>/<rel>`` so the operation
+    upstream under ``_repo_shared/<kind>/<rel>`` so the operation
     converges under retry: a process that died after auto-updating
     the copy but before refreshing ``vendor_path`` should not, on
     the next pass, mistake an un-customized copy for a customized
     one. Simulate that state by hand-syncing the consumer's copy to
-    the new master while leaving the old master under
+    the new upstream while leaving the old upstream under
     ``_repo_shared/``, then re-vendor and assert the retry is silent
     (no out-of-sync flag, no auto-update, no seed).
     """
@@ -531,7 +531,7 @@ def test_vendor_resumes_when_canonical_copy_already_at_new_master(
 
     (shared / "templates" / "PROJECT.md").write_text("project template v2\n")
     # Mid-upgrade crash state: canonical copy already at the new
-    # master, _repo_shared/ still on the old master.
+    # upstream, _repo_shared/ still on the old upstream.
     (consumer / "PROJECT.md").write_text("project template v2\n")
     assert (
         consumer / "_repo_shared" / "templates" / "PROJECT.md"
@@ -550,14 +550,14 @@ def test_vendor_resumes_when_canonical_copy_already_at_new_master(
     ).read_text() == "project template v2\n"
 
 
-def test_vendor_first_run_preexisting_template_matching_master_is_silent(
+def test_vendor_first_run_preexisting_template_matching_upstream_is_silent(
     tmp_path: Path,
 ) -> None:
-    """First vendor where the target already byte-matches the master.
+    """First vendor where the target already byte-matches the upstream.
 
     The consumer happened to drop in an identical copy before
-    onboarding -- there is no ``_repo_shared/`` yet, so no old master
-    to compare against. It already matches the master, so we are
+    onboarding -- there is no ``_repo_shared/`` yet, so no old upstream
+    to compare against. It already matches the upstream, so we are
     onboarded: nothing to do, in no bucket (not in ``out_of_sync``,
     ``seeded``, or ``updated``).
     """
@@ -565,7 +565,7 @@ def test_vendor_first_run_preexisting_template_matching_master_is_silent(
     consumer = tmp_path / "consumer"
     consumer.mkdir()
     _make_synthetic_shared(shared)
-    # Target present and byte-identical to the master before any
+    # Target present and byte-identical to the upstream before any
     # vendoring -- the cold-init "no prev_vendored" path.
     (consumer / "PROJECT.md").write_text("project template\n")
 

@@ -480,8 +480,8 @@ def _ensure_tool_bump_worktree(
             ff = _git_branch_ff_mergeable(repo_root, branch, upstream_ref)
             if _worktree_has_expected_bumps(wt_path, bumps) and ff:
                 return "resume"
-            # Stale: targets diverged or master moved past the
-            # branch's parent. Drop and recreate.
+            # Stale: targets diverged or the default branch moved
+            # past the branch's parent. Drop and recreate.
             _remove_worktree(repo_root, wt_path)
             _delete_branch(repo_root, branch)
     elif branch_exists and not worktree_exists:
@@ -755,7 +755,9 @@ def _cmd_init(args: argparse.Namespace) -> ExitCode:
         for p in result.seeded:
             print(f"    {p.relative_to(repo_root)}")
     if result.updated:
-        print(f"  templates updated to the new master: {len(result.updated)}")
+        print(
+            f"  templates updated to the new upstream: {len(result.updated)}"
+        )
         for p in result.updated:
             print(f"    {p.relative_to(repo_root)}")
     if result.skipped_ignored:
@@ -765,15 +767,15 @@ def _cmd_init(args: argparse.Namespace) -> ExitCode:
         )
     if result.out_of_sync:
         print(
-            f"  canonical paths out of sync with the master: "
+            f"  canonical paths out of sync with the upstream: "
             f"{len(result.out_of_sync)}"
         )
         for path, reason in result.out_of_sync:
             print(f"    {path.relative_to(repo_root)}: {reason}")
         print(
-            "  -- align each entry above with the master (delete a "
+            "  -- align each entry above with the upstream (delete a "
             "shadowing local file then re-run ``init`` for a symlink "
-            "kind; copy the master from ``_repo_shared/<kind>/<rel>`` "
+            "kind; copy the upstream from ``_repo_shared/<kind>/<rel>`` "
             "over your copy for a template kind), or list the path "
             "in ``.repo-shared-ignore`` to keep your own version."
         )
@@ -795,7 +797,7 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
     Failed test runs leave the worktree in place for debugging --
     the next ``upgrade`` invocation auto-detects and either
     resumes (target SHA + ff-mergeable) or recreates fresh
-    (master moved on, ff-merge no longer clean).
+    (the default branch moved on, ff-merge no longer clean).
     """
     refusal = _refuse_when_repo_shared("upgrade")
     if refusal is not None:
@@ -944,7 +946,7 @@ def _resolve_upstream_head(source: str) -> str | None:
 
 
 def _default_branch(repo_root: Path) -> str | None:
-    """Return ``origin/HEAD``'s branch name (e.g. ``master`` or ``main``)."""
+    """Return ``origin/HEAD``'s branch name (e.g. ``main``)."""
     result = sp.run(
         ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
         cwd=repo_root,
@@ -1047,8 +1049,8 @@ def _ensure_update_worktree(
             ff = _git_branch_ff_mergeable(consumer_root, branch, upstream_ref)
             if wt_sha == target_sha and ff:
                 return "resume"
-            # Stale: target SHA mismatch or master moved past the
-            # branch's parent. Drop and recreate.
+            # Stale: target SHA mismatch or the default branch moved
+            # past the branch's parent. Drop and recreate.
             _remove_worktree(consumer_root, wt_path)
             _delete_branch(consumer_root, branch)
     elif branch_exists and not worktree_exists:
@@ -1179,8 +1181,8 @@ def _ff_merge_and_push_then_cleanup(
     if not _git_branch_ff_mergeable(consumer_root, branch, upstream_ref):
         _eprint(
             f"{branch} no longer ff-merges into {upstream_ref} "
-            "(master moved while we tested). Worktree kept; rerun "
-            "``upgrade`` to redo on the new master."
+            "(the default branch moved while we tested). Worktree "
+            "kept; rerun ``upgrade`` to redo on the new tip."
         )
         return ExitCode.ERROR
 
@@ -1307,11 +1309,11 @@ def _cmd_revendor(args: argparse.Namespace) -> ExitCode:
     version. Not for direct human use.
 
     Returns ERROR if any canonical-path entry is out of sync with the
-    master (a symlink shadowed by a local file, a template copy that
+    upstream (a symlink shadowed by a local file, a template copy that
     has drifted, ...) so the upgrade aborts on a divergence instead of
     leaving the consumer's tree silently broken. Every violation is
     surfaced at once -- the consumer fixes them all (sync to the
-    master or list in ``.repo-shared-ignore``) before re-running
+    upstream or list in ``.repo-shared-ignore``) before re-running
     ``upgrade``.
     """
     repo_root = _resolve_consumer_root(args.path)
@@ -1325,7 +1327,7 @@ def _cmd_revendor(args: argparse.Namespace) -> ExitCode:
         for path, reason in result.out_of_sync:
             _eprint(f"  {path.relative_to(repo_root)}: {reason}")
         _eprint(
-            "Aborting upgrade: align each path above with the master, "
+            "Aborting upgrade: align each path above with the upstream, "
             "or list it in .repo-shared-ignore."
         )
         return ExitCode.ERROR

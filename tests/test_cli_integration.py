@@ -159,7 +159,7 @@ def test_init_is_idempotent(
     capsys.readouterr()
 
     # The re-run touches nothing on disk; the templates seeded by the
-    # first init still byte-match their masters, so init stays SUCCESS
+    # first init still byte-match their upstreams, so init stays SUCCESS
     # (a drifted template would ERROR -- see test_init_preexisting_*).
     exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(consumer)])
     assert exit_code == ExitCode.SUCCESS
@@ -201,7 +201,7 @@ def test_init_re_run_advances_pin_to_current_head(
     assert new_sha != initial_sha
 
     # The re-run advances the pin; the first init's seeded templates
-    # still byte-match their masters (the bump commit didn't touch
+    # still byte-match their upstreams (the bump commit didn't touch
     # them), so it stays SUCCESS.
     assert (
         _run_cli(
@@ -330,7 +330,7 @@ def test_init_preexisting_file_errors_on_shadowed_symlink(
     exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
     assert exit_code == ExitCode.ERROR
     out = capsys.readouterr().out
-    assert "canonical paths out of sync with the master" in out
+    assert "canonical paths out of sync with the upstream" in out
     assert "DEVELOPMENT_SHARED.md" in out
     assert "shadowed by a local file" in out
     # The consumer's file is untouched.
@@ -351,7 +351,7 @@ def test_init_preexisting_template_errors_on_drift(
 ) -> None:
     """A customized pre-existing template copy -> ERROR.
 
-    The consumer's CLAUDE.md doesn't byte-match the master and isn't
+    The consumer's CLAUDE.md doesn't byte-match the upstream and isn't
     ignored, so ``check_in_sync`` flags it; ``init`` reports it and
     returns ERROR.
     """
@@ -362,36 +362,36 @@ def test_init_preexisting_template_errors_on_drift(
     exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
     assert exit_code == ExitCode.ERROR
     out = capsys.readouterr().out
-    assert "canonical paths out of sync with the master" in out
+    assert "canonical paths out of sync with the upstream" in out
     assert "CLAUDE.md" in out
-    assert "template copy out of sync with master" in out
+    assert "template copy out of sync with upstream" in out
     # The consumer's copy is untouched.
     assert consumer_claude.read_text() == "consumer's own CLAUDE.md\n"
-    # The vendored master still lands for the drift gate.
+    # The vendored upstream still lands for the drift gate.
     assert (tmp_path / "_repo_shared" / "templates" / "CLAUDE.md").is_file()
 
 
-def test_init_preexisting_template_matching_master_no_warning(
+def test_init_preexisting_template_matching_upstream_no_warning(
     tmp_path: Path,
     _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """First init where a pre-existing template already matches the master.
+    """First init where a pre-existing template already matches the upstream.
 
     The consumer dropped in a byte-identical ``CLAUDE.md`` before
     onboarding. It is already in sync -- ``init`` is done, stays
     SUCCESS, and says nothing about it being out of sync.
     """
     _git_init(tmp_path)
-    master = (REPO_ROOT / "shared" / "templates" / "CLAUDE.md").read_text()
-    (tmp_path / "CLAUDE.md").write_text(master)
+    upstream = (REPO_ROOT / "shared" / "templates" / "CLAUDE.md").read_text()
+    (tmp_path / "CLAUDE.md").write_text(upstream)
 
     exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
     assert exit_code == ExitCode.SUCCESS
     out = capsys.readouterr().out
     assert "out of sync" not in out
     # The consumer's already-matching copy is untouched.
-    assert (tmp_path / "CLAUDE.md").read_text() == master
+    assert (tmp_path / "CLAUDE.md").read_text() == upstream
 
 
 def test_init_ignored_path_succeeds(
@@ -1039,7 +1039,7 @@ def test_revendor_errors_when_canonical_path_is_out_of_sync(
     Upgrade-time re-vendor refuses to silently leave a consumer with a
     shadowed symlink or a drifted template copy: every violation is
     listed on stderr and the exit code is ERROR so ``upgrade`` aborts.
-    The consumer fixes them all -- align to the master, or list the
+    The consumer fixes them all -- align to the upstream, or list the
     path in ``.repo-shared-ignore`` -- before re-running ``upgrade``.
     """
     consumer = _init_consumer(tmp_path)
@@ -1055,7 +1055,7 @@ def test_revendor_errors_when_canonical_path_is_out_of_sync(
     assert "DEVELOPMENT_SHARED.md" in err
     assert "shadowed by a local file" in err
     assert "CLAUDE.md" in err
-    assert "template copy out of sync with master" in err
+    assert "template copy out of sync with upstream" in err
     assert ".repo-shared-ignore" in err
     # The consumer's local file is untouched.
     dev = consumer / "DEVELOPMENT_SHARED.md"
