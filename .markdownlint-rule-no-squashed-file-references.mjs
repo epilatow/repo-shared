@@ -1,0 +1,1 @@
+shared/dotfiles/markdownlint-rule-no-squashed-file-references.mjs

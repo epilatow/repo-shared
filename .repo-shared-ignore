@@ -1,0 +1,6 @@
+# repo-shared dogfoods its own shared/ tree via test_in_sync.py. The
+# delivered DEVELOPMENT.md / DEVELOPMENT_AGENT.md masters are
+# placeholder templates that consumers symlink into their tree; this
+# repo carries its own customized DEVELOPMENT.md, so the canonical
+# path is opted out of the sync check.
+DEVELOPMENT.md

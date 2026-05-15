@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "epilatow-repo-shared"
+version = "0.1.0"
+description = "Shared dev conventions, configs, and pytest helpers consumed by sibling epilatow repos."
+requires-python = ">=3.11"
+dependencies = [
+    # All tools the shared test bases shell out to are pinned so
+    # every consumer that pins epilatow-repo-shared by SHA gets a
+    # deterministic ruff / mypy / mdformat at lock time. Bumping
+    # the pin is a deliberate repo-shared commit, never a drive-by
+    # ``uv lock --upgrade`` in a consumer.
+    "mdformat==0.7.22",
+    "mdformat-gfm==0.4.1",
+    "mdformat-tables==1.0.0",
+    "ruff==0.15.12",
+    "mypy==2.0.0",
+    # tomlkit for round-trip-preserving pyproject edits in
+    # ``_ensure_repo_shared_dep`` -- injects the ``testpaths``
+    # entry so pytest finds shared tests at their vendored path
+    # without leaking the consumer's ``tests/conftest.py``.
+    "tomlkit==0.15.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+repo-shared = "epilatow_repo_shared.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/epilatow_repo_shared"]
+# The package directory contains a symlink at
+# ``src/epilatow_repo_shared/_shared`` pointing back to ``shared/`` at
+# the repo root. Hatchling follows the symlink during the wheel build,
+# which makes the master content reachable via ``importlib.resources``
+# both in editable installs (real-time symlink) and in wheel installs
+# (resolved copies).
+
+[tool.pytest.ini_options]
+# Dogfood: ``tests/`` is repo-shared's own unit + integration suite;
+# ``shared/tests`` is the delivered consumer-side test
+# pack -- including it here makes repo-shared eat its own dog food
+# (same set every consumer runs) on every ``uv run pytest``.
+testpaths = ["tests", "shared/tests"]
+
+[tool.ruff]
+line-length = 79
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+# Dogfood: the delivered shared/tests/test_code_quality.py
+# auto-discovers every .py under the repo (skipping _repo_shared/,
+# .venv/, __pycache__/, ...), so no [tool.repo-shared.code-quality]
+# block is needed unless we add extension-less shebang scripts to
+# bin/.
