@@ -14,10 +14,10 @@ dependencies = [
     # the pin is a deliberate repo-shared commit, never a drive-by
     # ``uv lock --upgrade`` in a consumer.
     "mdformat==0.7.22",
-    "mdformat-gfm==0.4.1",
+    "mdformat-gfm==1.0.0",
     "mdformat-tables==1.0.0",
-    "ruff==0.15.12",
-    "mypy==2.0.0",
+    "ruff==0.15.13",
+    "mypy==2.1.0",
     # tomlkit for round-trip-preserving pyproject edits in
     # ``_ensure_repo_shared_dep`` -- injects the ``testpaths``
     # entry so pytest finds shared tests at their vendored path
