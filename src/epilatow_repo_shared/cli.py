@@ -430,19 +430,32 @@ def _tool_bump_hash(bumps: list[tuple[str, str, str]]) -> str:
 def _worktree_has_expected_bumps(
     wt_path: Path, bumps: list[tuple[str, str, str]]
 ) -> bool:
-    """True iff ``wt_path``'s ``pyproject.toml`` carries the targets.
+    """True iff ``wt_path``'s ``pyproject.toml`` is a valid bump state.
 
-    Used by the resume path: when a worktree from a prior run
-    still exists at the same deterministic branch name AND its
-    pyproject already pins every target version, the bump work is
-    already done -- we just need to re-run tests + push (whichever
-    failed last time).
+    Used by the resume path: when a worktree from a prior run still
+    exists at the same deterministic branch name AND its pyproject
+    pins each candidate at either its ``old`` (skipped on a prior
+    conflict-fallback sweep) or ``new`` (accepted) value, the bump
+    work is already done -- we just need to re-run tests + push
+    (whichever failed last time). At least one bump must be at its
+    ``new`` to count as resumable, so a worktree that bailed out
+    with zero accepted bumps gets rebuilt instead of resumed.
+
+    Any other value indicates a stale or foreign worktree state
+    (different bump set, hand-edit) and triggers a rebuild.
     """
     pyproject = wt_path / "pyproject.toml"
     if not pyproject.is_file():
         return False
     actual = dict(_read_pinned_deps(pyproject.read_text()))
-    return all(actual.get(name) == new for name, _old, new in bumps)
+    accepted_any = False
+    for name, old, new in bumps:
+        pinned = actual.get(name)
+        if pinned == new:
+            accepted_any = True
+        elif pinned != old:
+            return False
+    return accepted_any
 
 
 def _ensure_tool_bump_worktree(
@@ -508,6 +521,126 @@ def _ensure_tool_bump_worktree(
         _eprint(f"git worktree add failed for {wt_path}; resolve and rerun.")
         return ExitCode.SUBPROCESS
     return "needs-work"
+
+
+def _compose_bumped_pyproject(
+    original_text: str, bumps: list[tuple[str, str, str]]
+) -> str | None:
+    """Return ``original_text`` with each ``(name, old, new)`` pin rewritten.
+
+    Returns ``None`` if any ``"name==old"`` literal can't be found in
+    the source -- a pre-flight check the caller uses to fail fast
+    when the pyproject shape moved out of band between PyPI query
+    and rewrite. Replacement is two-pass (validate all, then mutate)
+    so a partial rewrite never lands on disk.
+    """
+    for name, old, _new in bumps:
+        if f'"{name}=={old}"' not in original_text:
+            return None
+    text = original_text
+    for name, old, new in bumps:
+        text = text.replace(f'"{name}=={old}"', f'"{name}=={new}"')
+    return text
+
+
+def _try_bump_set(
+    *,
+    wt_path: Path,
+    wt_pyproject: Path,
+    original_text: str,
+    bumps: list[tuple[str, str, str]],
+) -> bool:
+    """Write ``bumps`` into ``wt_pyproject`` and run ``uv lock``.
+
+    Returns ``True`` iff lock succeeds. On failure the pyproject is
+    left in the attempted state -- callers iterating across sets are
+    expected to call again with a different set, which overwrites
+    pyproject before the next lock.
+    """
+    text = _compose_bumped_pyproject(original_text, bumps)
+    if text is None:
+        return False
+    wt_pyproject.write_text(text)
+    result = sp.run(
+        ["uv", "lock"],
+        cwd=wt_path,
+        check=False,
+        timeout=sp.GENERAL_TIMEOUT_SECONDS,
+    )
+    return result.returncode == 0
+
+
+def _resolve_compatible_bumps(
+    *,
+    wt_path: Path,
+    wt_pyproject: Path,
+    original_text: str,
+    bumps: list[tuple[str, str, str]],
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+    """Return ``(accepted, skipped)`` after resolving lock conflicts.
+
+    Fast path: apply every bump and run ``uv lock`` once; if that
+    resolves, every bump is accepted. Otherwise fall back to a
+    greedy per-pin sweep in the caller's input order -- a bump is
+    kept iff it locks together with the already-accepted set, and
+    dropped otherwise. Worst case is N+2 lock runs (the failed
+    fast-path attempt, N per-pin attempts, plus a final flush when
+    the last iteration was a reject or every candidate was
+    rejected). When the per-pin sweep ends on an accept, pyproject
+    + lockfile already reflect ``accepted`` and the flush is
+    skipped.
+
+    Handles the realistic conflict shape: a tool's new major
+    release lands on PyPI before its plugin ecosystem catches up
+    (e.g. ``mdformat 1.0`` while ``mdformat-tables`` still caps
+    ``mdformat<0.8``). The non-conflicting bumps still land instead
+    of the whole transaction failing.
+    """
+    if _try_bump_set(
+        wt_path=wt_path,
+        wt_pyproject=wt_pyproject,
+        original_text=original_text,
+        bumps=bumps,
+    ):
+        return list(bumps), []
+
+    accepted: list[tuple[str, str, str]] = []
+    skipped: list[tuple[str, str, str]] = []
+    last_was_accept = False
+    for bump in bumps:
+        if _try_bump_set(
+            wt_path=wt_path,
+            wt_pyproject=wt_pyproject,
+            original_text=original_text,
+            bumps=accepted + [bump],
+        ):
+            accepted.append(bump)
+            last_was_accept = True
+        else:
+            skipped.append(bump)
+            last_was_accept = False
+    if accepted and not last_was_accept:
+        # The last iteration rejected its candidate, so pyproject +
+        # lockfile reflect ``accepted + [rejected]``. Flush to the
+        # accepted-only state so commit / push / tests see a
+        # consistent tree. When the last iteration was an accept,
+        # pyproject + lockfile already reflect ``accepted`` and the
+        # flush is skipped.
+        _try_bump_set(
+            wt_path=wt_path,
+            wt_pyproject=wt_pyproject,
+            original_text=original_text,
+            bumps=accepted,
+        )
+    elif not accepted:
+        wt_pyproject.write_text(original_text)
+        sp.run(
+            ["uv", "lock"],
+            cwd=wt_path,
+            check=False,
+            timeout=sp.GENERAL_TIMEOUT_SECONDS,
+        )
+    return accepted, skipped
 
 
 def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
@@ -632,32 +765,29 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
 
     if setup == "needs-work":
         wt_pyproject = wt_path / "pyproject.toml"
-        wt_text = wt_pyproject.read_text()
-        for name, old, new in bumps:
-            old_pin = f'"{name}=={old}"'
-            new_pin = f'"{name}=={new}"'
-            if old_pin not in wt_text:
-                _eprint(
-                    f"could not find {old_pin} for in-place "
-                    f"rewrite in {wt_pyproject}; worktree left "
-                    f"at {wt_path}."
-                )
-                return ExitCode.ERROR
-            wt_text = wt_text.replace(old_pin, new_pin)
-        wt_pyproject.write_text(wt_text)
-
-        lock_result = sp.run(
-            ["uv", "lock"],
-            cwd=wt_path,
-            check=False,
-            timeout=sp.GENERAL_TIMEOUT_SECONDS,
-        )
-        if lock_result.returncode != 0:
+        original_text = wt_pyproject.read_text()
+        if _compose_bumped_pyproject(original_text, bumps) is None:
             _eprint(
-                f"uv lock failed after bump; worktree {wt_path} "
-                "kept for inspection."
+                "could not locate a bump pin for in-place rewrite "
+                f"in {wt_pyproject}; worktree left at {wt_path}."
+            )
+            return ExitCode.ERROR
+
+        accepted, skipped = _resolve_compatible_bumps(
+            wt_path=wt_path,
+            wt_pyproject=wt_pyproject,
+            original_text=original_text,
+            bumps=bumps,
+        )
+        for name, old, new in skipped:
+            print(f"  skipped (conflict): {name} {old} -> {new}")
+        if not accepted:
+            _eprint(
+                "every candidate bump conflicts with the existing "
+                f"pin set; worktree {wt_path} kept for inspection."
             )
             return ExitCode.SUBPROCESS
+        bumps = accepted
     else:
         print(f"resuming existing bump worktree at {wt_path}.")
 

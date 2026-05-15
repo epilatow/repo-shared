@@ -10,13 +10,26 @@ import pytest
 
 from epilatow_repo_shared import sp
 from epilatow_repo_shared.cli import (
+    _compose_bumped_pyproject,
     _inject_shared_testpaths,
     _project_name,
     _read_locked_sha,
     _read_pinned_deps,
+    _resolve_compatible_bumps,
     _snapshot_vendored_paths,
+    _worktree_has_expected_bumps,
     args_parser,
 )
+
+_PYPROJECT_WITH_PINS = """\
+[project]
+name = "stub"
+dependencies = [
+    "ruff==0.5.0",
+    "mdformat==0.7.22",
+    "mypy==2.0.0",
+]
+"""
 
 
 def test_inject_shared_testpaths_creates_section_from_scratch(
@@ -339,3 +352,289 @@ def test_project_name_falls_back_to_basename_outside_git_repo(
     plain = tmp_path / "plain-dir"
     plain.mkdir()
     assert _project_name(plain) == "plain-dir"
+
+
+def test_compose_bumped_pyproject_rewrites_each_pin() -> None:
+    bumps = [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("mypy", "2.0.0", "2.1.0"),
+    ]
+    rewritten = _compose_bumped_pyproject(_PYPROJECT_WITH_PINS, bumps)
+    assert rewritten is not None
+    assert '"ruff==0.6.0"' in rewritten
+    assert '"mypy==2.1.0"' in rewritten
+    assert '"ruff==0.5.0"' not in rewritten
+    assert '"mypy==2.0.0"' not in rewritten
+    # An untouched pin stays put.
+    assert '"mdformat==0.7.22"' in rewritten
+
+
+def test_compose_bumped_pyproject_returns_none_on_missing_pin() -> None:
+    # Validation runs across every bump before any rewrite -- the
+    # caller treats ``None`` as a fatal config error and exits
+    # without mutating pyproject.
+    bumps = [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("nonexistent-pkg", "1.0.0", "2.0.0"),
+    ]
+    assert _compose_bumped_pyproject(_PYPROJECT_WITH_PINS, bumps) is None
+
+
+def _stub_uv_lock_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    wt_pyproject: Path,
+    forbidden: str,
+) -> list[str]:
+    """Stub ``sp.run`` so ``uv lock`` fails iff ``forbidden`` is in pyproject.
+
+    Simulates a real PyPI conflict shape (e.g. ``mdformat==1.0.0`` is
+    incompatible with the plugin ecosystem's current caps): the lock
+    fails for any candidate set that contains the forbidden pin, and
+    succeeds otherwise. Returns the list of pyproject snapshots seen
+    by the stub so a test can also assert iteration order.
+    """
+    snapshots: list[str] = []
+
+    def fake(
+        cmd: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["uv", "lock"]:
+            snapshot = wt_pyproject.read_text()
+            snapshots.append(snapshot)
+            rc = 1 if forbidden in snapshot else 0
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=rc, stdout="", stderr=""
+            )
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(sp, "run", fake)
+    return snapshots
+
+
+def test_resolve_compatible_bumps_fast_path_when_full_set_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    wt_pyproject = wt / "pyproject.toml"
+    wt_pyproject.write_text(_PYPROJECT_WITH_PINS)
+    # No forbidden substring -> every lock call succeeds.
+    snapshots = _stub_uv_lock_rejecting(
+        monkeypatch, wt_pyproject=wt_pyproject, forbidden="ZZZ-NEVER-MATCH"
+    )
+
+    bumps = [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("mdformat", "0.7.22", "1.0.0"),
+        ("mypy", "2.0.0", "2.1.0"),
+    ]
+    accepted, skipped = _resolve_compatible_bumps(
+        wt_path=wt,
+        wt_pyproject=wt_pyproject,
+        original_text=_PYPROJECT_WITH_PINS,
+        bumps=bumps,
+    )
+    assert accepted == bumps
+    assert skipped == []
+    # Single ``uv lock`` invocation -- the fast path doesn't iterate.
+    assert len(snapshots) == 1
+    final = wt_pyproject.read_text()
+    assert '"ruff==0.6.0"' in final
+    assert '"mdformat==1.0.0"' in final
+    assert '"mypy==2.1.0"' in final
+
+
+def test_resolve_compatible_bumps_drops_conflicting_pin_keeps_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    wt_pyproject = wt / "pyproject.toml"
+    wt_pyproject.write_text(_PYPROJECT_WITH_PINS)
+    # Simulate the real-world shape: ``mdformat==1.0.0`` can't resolve
+    # against the plugin caps. Any candidate set containing that pin
+    # fails the lock; everything else passes.
+    snapshots = _stub_uv_lock_rejecting(
+        monkeypatch, wt_pyproject=wt_pyproject, forbidden='"mdformat==1.0.0"'
+    )
+
+    bumps = [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("mdformat", "0.7.22", "1.0.0"),
+        ("mypy", "2.0.0", "2.1.0"),
+    ]
+    accepted, skipped = _resolve_compatible_bumps(
+        wt_path=wt,
+        wt_pyproject=wt_pyproject,
+        original_text=_PYPROJECT_WITH_PINS,
+        bumps=bumps,
+    )
+    assert accepted == [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("mypy", "2.0.0", "2.1.0"),
+    ]
+    assert skipped == [("mdformat", "0.7.22", "1.0.0")]
+    final = wt_pyproject.read_text()
+    assert '"ruff==0.6.0"' in final
+    assert '"mypy==2.1.0"' in final
+    # The conflicting pin stays at its original version.
+    assert '"mdformat==0.7.22"' in final
+    assert '"mdformat==1.0.0"' not in final
+    # Lock budget: 1 (failed fast path) + 3 (per-pin sweep) + 0
+    # (skipped flush because the last iteration was an accept).
+    assert len(snapshots) == 4
+
+
+def test_resolve_compatible_bumps_returns_empty_when_every_bump_conflicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    wt_pyproject = wt / "pyproject.toml"
+    wt_pyproject.write_text(_PYPROJECT_WITH_PINS)
+    # Forbid any rewrite: every ``==X.Y.Z"`` in the original text gets
+    # treated as the only valid state, so any new version triggers
+    # failure. The simplest shape is a forbidden substring that the
+    # bumps all introduce -- ``==`` plus the new version's prefix.
+    snapshots: list[str] = []
+
+    def fake(
+        cmd: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["uv", "lock"]:
+            text = wt_pyproject.read_text()
+            snapshots.append(text)
+            # Any deviation from the original pin set fails.
+            rc = 0 if text == _PYPROJECT_WITH_PINS else 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=rc, stdout="", stderr=""
+            )
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(sp, "run", fake)
+
+    bumps = [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("mdformat", "0.7.22", "1.0.0"),
+        ("mypy", "2.0.0", "2.1.0"),
+    ]
+    accepted, skipped = _resolve_compatible_bumps(
+        wt_path=wt,
+        wt_pyproject=wt_pyproject,
+        original_text=_PYPROJECT_WITH_PINS,
+        bumps=bumps,
+    )
+    assert accepted == []
+    assert skipped == bumps
+    # On total failure, pyproject is restored to the original state so
+    # the worktree is usable for the maintainer to inspect.
+    assert wt_pyproject.read_text() == _PYPROJECT_WITH_PINS
+    # Lock budget: 1 (failed fast path) + 3 (per-pin sweep, each
+    # rejected) + 1 (final restore to flush lockfile back to the
+    # original pin set).
+    assert len(snapshots) == 5
+
+
+def _write_pyproject_with_pins(
+    path: Path, pins: dict[str, str], extra_dep: str | None = None
+) -> None:
+    """Write a minimal pyproject with the given ``name -> version`` pins."""
+    lines = ["[project]", 'name = "stub"', "dependencies = ["]
+    for name, version in pins.items():
+        lines.append(f'    "{name}=={version}",')
+    if extra_dep is not None:
+        lines.append(f'    "{extra_dep}",')
+    lines.append("]")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_worktree_has_expected_bumps_true_when_every_pin_at_new(
+    tmp_path: Path,
+) -> None:
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _write_pyproject_with_pins(
+        wt / "pyproject.toml",
+        {"ruff": "0.6.0", "mdformat": "1.0.0", "mypy": "2.1.0"},
+    )
+    bumps = [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("mdformat", "0.7.22", "1.0.0"),
+        ("mypy", "2.0.0", "2.1.0"),
+    ]
+    assert _worktree_has_expected_bumps(wt, bumps) is True
+
+
+def test_worktree_has_expected_bumps_true_for_partial_bump_with_old_skip(
+    tmp_path: Path,
+) -> None:
+    # Resume path for a prior conflict-fallback run: ruff and mypy
+    # landed at their new versions; mdformat stayed at its old pin
+    # because mdformat-tables held it back. A re-run with the same
+    # PyPI candidate set must accept this state as resumable.
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _write_pyproject_with_pins(
+        wt / "pyproject.toml",
+        {"ruff": "0.6.0", "mdformat": "0.7.22", "mypy": "2.1.0"},
+    )
+    bumps = [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("mdformat", "0.7.22", "1.0.0"),
+        ("mypy", "2.0.0", "2.1.0"),
+    ]
+    assert _worktree_has_expected_bumps(wt, bumps) is True
+
+
+def test_worktree_has_expected_bumps_false_when_no_pin_at_new(
+    tmp_path: Path,
+) -> None:
+    # Every pin is still at its ``old`` value -- a prior run that
+    # bailed out with zero accepted bumps. Not resumable; the
+    # worktree should be rebuilt.
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _write_pyproject_with_pins(
+        wt / "pyproject.toml",
+        {"ruff": "0.5.0", "mdformat": "0.7.22", "mypy": "2.0.0"},
+    )
+    bumps = [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("mdformat", "0.7.22", "1.0.0"),
+        ("mypy", "2.0.0", "2.1.0"),
+    ]
+    assert _worktree_has_expected_bumps(wt, bumps) is False
+
+
+def test_worktree_has_expected_bumps_false_for_foreign_pin_value(
+    tmp_path: Path,
+) -> None:
+    # A pin at a version that's neither ``old`` nor ``new`` for any
+    # candidate. Indicates a stale or foreign worktree state; reject
+    # so the caller rebuilds.
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _write_pyproject_with_pins(
+        wt / "pyproject.toml",
+        {"ruff": "0.6.0", "mdformat": "0.99.0", "mypy": "2.1.0"},
+    )
+    bumps = [
+        ("ruff", "0.5.0", "0.6.0"),
+        ("mdformat", "0.7.22", "1.0.0"),
+        ("mypy", "2.0.0", "2.1.0"),
+    ]
+    assert _worktree_has_expected_bumps(wt, bumps) is False
+
+
+def test_worktree_has_expected_bumps_false_when_pyproject_missing(
+    tmp_path: Path,
+) -> None:
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    bumps = [("ruff", "0.5.0", "0.6.0")]
+    assert _worktree_has_expected_bumps(wt, bumps) is False

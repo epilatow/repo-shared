@@ -125,6 +125,16 @@ branch and pushes; `--keep-worktree` retains the worktree after push.
 `git push --dry-run` runs before any bump work so an upstream rejection fails
 fast.
 
+When `uv lock` rejects the full bump set -- the common shape is a tool's new
+major release landing on PyPI before its plugin ecosystem catches up, e.g.
+`mdformat 1.0` while `mdformat-tables` still caps `mdformat<0.8` -- the
+resolver falls back to a per-pin sweep in pyproject order. Each bump is kept
+iff it locks together with the already-accepted set, and dropped otherwise.
+Dropped pins are reported as `skipped (conflict): <name> <old> -> <new>` and
+the non-conflicting bumps still land in the commit. If every candidate
+conflicts, the worktree is restored to its pre-bump state and the run exits
+with an error so the maintainer can investigate.
+
 The subcommand is hidden from the consumer-shipped `--help` output (the same
 CLI module ships in every consumer's venv, but the subcommand only makes sense
 from a repo-shared maintainer's clone). A runtime guard in `_cmd_upgrade_tools`
