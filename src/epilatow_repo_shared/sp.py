@@ -5,13 +5,19 @@ Every subprocess invocation in this package goes through ``run`` so
 no command can hang the CLI indefinitely. Two timeout categories
 cover every real use:
 
-- ``GENERAL_TIMEOUT_SECONDS`` (60s) -- git operations, single
-  CLI invocations, anything that should be quick.
-- ``TESTS_TIMEOUT_SECONDS`` (600s) -- the consumer's pytest run
-  invoked by ``repo-shared upgrade --run-tests`` / ``--push``,
-  plus the test-base classes' own tool invocations
-  (``mdformat``, ``markdownlint-cli2``, ``mypy --strict``) which
-  can take well over a minute on a moderate repo.
+- ``SHORT_TIMEOUT_SECONDS`` (60s) -- purely local operations: git
+  plumbing against the working tree, ``uv init``, file-system
+  scaffolding. No remote round-trip, no test runner.
+- ``LONG_TIMEOUT_SECONDS`` (600s) -- anything that can block on the
+  network or on a test runner: ``git fetch`` / ``push`` / ``ls-remote``,
+  ``uv add`` / ``uv lock`` (which hit PyPI and git remotes), the
+  consumer's pytest run invoked by ``repo-shared upgrade
+  --run-tests`` / ``--push``, and the test-base classes' own tool
+  invocations (``mdformat``, ``markdownlint-cli2``, ``mypy --strict``)
+  which can take well over a minute on a moderate repo. Network ops
+  share the long bucket because an unreachable remote can stall past
+  the OS TCP-SYN budget (>60s on macOS), which is longer than the
+  short timeout's entire budget.
 
 Callers pass ``timeout=`` explicitly (an ``int`` for seconds, or
 one of the two constants for the category). A ``TimeoutExpired``
@@ -27,8 +33,8 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-GENERAL_TIMEOUT_SECONDS = 60
-TESTS_TIMEOUT_SECONDS = 600
+SHORT_TIMEOUT_SECONDS = 60
+LONG_TIMEOUT_SECONDS = 600
 
 
 @overload
@@ -54,7 +60,7 @@ def run(
 def run(
     cmd: Sequence[str],
     *,
-    timeout: int = GENERAL_TIMEOUT_SECONDS,
+    timeout: int = SHORT_TIMEOUT_SECONDS,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[Any]:
     """Run ``cmd`` with a mandatory timeout.

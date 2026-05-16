@@ -81,6 +81,7 @@ def _can_push(repo_root: Path, branch: str) -> bool:
         capture_output=True,
         text=True,
         check=False,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     return result.returncode == 0
 
@@ -206,7 +207,7 @@ def _ensure_repo_shared_dep(
         ["uv", "add", f"epilatow-repo-shared @ {effective_source}", "pytest"],
         cwd=repo_root,
         check=False,
-        timeout=sp.TESTS_TIMEOUT_SECONDS,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if add_result.returncode != 0:
         return add_result.returncode
@@ -515,7 +516,7 @@ def _ensure_tool_bump_worktree(
         ],
         cwd=repo_root,
         check=False,
-        timeout=sp.GENERAL_TIMEOUT_SECONDS,
+        timeout=sp.SHORT_TIMEOUT_SECONDS,
     )
     if create.returncode != 0:
         _eprint(f"git worktree add failed for {wt_path}; resolve and rerun.")
@@ -565,7 +566,7 @@ def _try_bump_set(
         ["uv", "lock"],
         cwd=wt_path,
         check=False,
-        timeout=sp.GENERAL_TIMEOUT_SECONDS,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     return result.returncode == 0
 
@@ -638,7 +639,7 @@ def _resolve_compatible_bumps(
             ["uv", "lock"],
             cwd=wt_path,
             check=False,
-            timeout=sp.GENERAL_TIMEOUT_SECONDS,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
         )
     return accepted, skipped
 
@@ -705,7 +706,7 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
         ["git", "fetch", "origin"],
         cwd=repo_root,
         check=False,
-        timeout=sp.GENERAL_TIMEOUT_SECONDS,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if fetch_result.returncode != 0:
         _eprint("git fetch origin failed.")
@@ -810,7 +811,7 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
         ["uv", "run", "--extra", "test", "pytest"],
         cwd=wt_path,
         check=False,
-        timeout=sp.TESTS_TIMEOUT_SECONDS,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if test_result.returncode != 0:
         _eprint(
@@ -834,7 +835,7 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
             ["git", "add", "pyproject.toml", "uv.lock"],
             cwd=wt_path,
             check=False,
-            timeout=sp.GENERAL_TIMEOUT_SECONDS,
+            timeout=sp.SHORT_TIMEOUT_SECONDS,
         )
         if add_result.returncode != 0:
             _eprint(f"git add failed in {wt_path}; worktree kept.")
@@ -843,7 +844,7 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
             ["git", "commit", "-m", message],
             cwd=wt_path,
             check=False,
-            timeout=sp.GENERAL_TIMEOUT_SECONDS,
+            timeout=sp.SHORT_TIMEOUT_SECONDS,
         )
         if commit_result.returncode != 0:
             _eprint(f"git commit failed in {wt_path}; worktree kept.")
@@ -981,7 +982,10 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
 
     if (
         sp.run(
-            ["git", "fetch", "origin"], cwd=consumer_root, check=False
+            ["git", "fetch", "origin"],
+            cwd=consumer_root,
+            check=False,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
         ).returncode
         != 0
     ):
@@ -1051,7 +1055,7 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
         cmd,
         cwd=wt_path,
         check=False,
-        timeout=sp.TESTS_TIMEOUT_SECONDS,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if test_result.returncode != 0:
         _eprint(
@@ -1083,6 +1087,7 @@ def _resolve_upstream_head(source: str) -> str | None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if result.returncode != 0 or not result.stdout.strip():
         return None
@@ -1242,7 +1247,15 @@ def _do_inner_upgrade(
         "--frozen",
         f"epilatow-repo-shared @ {source}@{target_sha}",
     ]
-    if sp.run(add_cmd, cwd=wt_path, check=False).returncode != 0:
+    if (
+        sp.run(
+            add_cmd,
+            cwd=wt_path,
+            check=False,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
+        ).returncode
+        != 0
+    ):
         _eprint("uv add (lock bump) failed in worktree.")
         return 1
 
@@ -1263,6 +1276,7 @@ def _do_inner_upgrade(
         ],
         cwd=wt_path,
         check=False,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if revendor.returncode != 0:
         _eprint("re-vendor failed in worktree.")
@@ -1321,7 +1335,12 @@ def _ff_merge_and_push_then_cleanup(
     informational note so the temporary switch isn't silent.
     """
     # Re-fetch in case origin moved while we tested.
-    sp.run(["git", "fetch", "origin"], cwd=consumer_root, check=False)
+    sp.run(
+        ["git", "fetch", "origin"],
+        cwd=consumer_root,
+        check=False,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
+    )
     if not _git_branch_ff_mergeable(consumer_root, branch, upstream_ref):
         _eprint(
             f"{branch} no longer ff-merges into {upstream_ref} "
@@ -1360,6 +1379,7 @@ def _ff_merge_and_push_then_cleanup(
         ["git", "push", "origin", default_branch],
         cwd=consumer_root,
         check=False,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if push.returncode != 0:
         _eprint(
@@ -1592,7 +1612,7 @@ def _cmd_run_tests(args: argparse.Namespace) -> ExitCode:
         cmd,
         cwd=repo_root,
         check=False,
-        timeout=sp.TESTS_TIMEOUT_SECONDS,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if result.returncode in (0, 1):
         return ExitCode(result.returncode)

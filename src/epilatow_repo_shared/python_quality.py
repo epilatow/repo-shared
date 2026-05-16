@@ -115,7 +115,7 @@ def run_ruff_lint(targets: Sequence[str], *, cwd: Path) -> None:
         capture_output=True,
         text=True,
         check=False,
-        timeout=sp.TESTS_TIMEOUT_SECONDS,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -148,7 +148,7 @@ def run_ruff_format_check(targets: Sequence[str], *, cwd: Path) -> None:
         capture_output=True,
         text=True,
         check=False,
-        timeout=sp.TESTS_TIMEOUT_SECONDS,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -221,7 +221,7 @@ def run_mypy_strict(
             capture_output=True,
             text=True,
             check=False,
-            timeout=sp.TESTS_TIMEOUT_SECONDS,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
         )
         if result.returncode != 0:
             failures.append(

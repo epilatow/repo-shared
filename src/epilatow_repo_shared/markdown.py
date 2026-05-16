@@ -115,7 +115,7 @@ class MdformatCheckBase:
             capture_output=True,
             text=True,
             check=False,
-            timeout=sp.TESTS_TIMEOUT_SECONDS,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
         )
         if result.returncode != 0:
             raise AssertionError(
@@ -150,7 +150,7 @@ class MarkdownlintCheckBase:
             capture_output=True,
             text=True,
             check=False,
-            timeout=sp.TESTS_TIMEOUT_SECONDS,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
         )
         if result.returncode != 0:
             raise AssertionError(
