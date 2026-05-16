@@ -8,10 +8,13 @@ are not consumer-facing -- consumers customize via pyproject knobs
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from epilatow_repo_shared import sp
 from epilatow_repo_shared.python_quality import (
     DEFAULT_RUFF_LINE_LENGTH,
     Pep723Metadata,
@@ -60,6 +63,114 @@ def test_run_ruff_skipped_without_targets(tmp_path: Path) -> None:
 def test_run_mypy_skipped_without_targets(tmp_path: Path) -> None:
     with pytest.raises(pytest.skip.Exception):
         run_mypy_strict([], cwd=tmp_path)
+
+
+_MYPY_INTERNAL_ERROR_STDERR = (
+    "some/file.py: error: INTERNAL ERROR -- "
+    "Please try using mypy master on GitHub:\n"
+    "version: 2.1.0\n"
+)
+
+
+def _patch_sp_run(
+    monkeypatch: pytest.MonkeyPatch,
+    results: list[subprocess.CompletedProcess[str]],
+) -> list[list[str]]:
+    """Replace ``sp.run`` with a scripted sequence; return calls list.
+
+    ``results`` is consumed in order. The returned ``calls`` list
+    accumulates the ``cmd`` argument from each invocation so tests can
+    assert the right flags were passed.
+    """
+    calls: list[list[str]] = []
+    iterator = iter(results)
+
+    def fake_run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return next(iterator)
+
+    monkeypatch.setattr(sp, "run", fake_run)
+    return calls
+
+
+def _completed(
+    returncode: int, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["mypy"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
+
+
+def test_run_mypy_strict_passes_show_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _patch_sp_run(monkeypatch, [_completed(0)])
+    run_mypy_strict(["x.py"], cwd=tmp_path)
+    assert "--show-traceback" in calls[0]
+
+
+def test_run_mypy_strict_retries_on_internal_error_then_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _patch_sp_run(
+        monkeypatch,
+        [
+            _completed(2, stderr=_MYPY_INTERNAL_ERROR_STDERR),
+            _completed(0),
+        ],
+    )
+    run_mypy_strict(["x.py"], cwd=tmp_path)
+    assert len(calls) == 2
+
+
+def test_run_mypy_strict_retries_three_times_then_surfaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _patch_sp_run(
+        monkeypatch,
+        [_completed(2, stderr=_MYPY_INTERNAL_ERROR_STDERR)] * 3,
+    )
+    with pytest.raises(AssertionError) as exc_info:
+        run_mypy_strict(["x.py"], cwd=tmp_path)
+    assert len(calls) == 3
+    assert "INTERNAL ERROR after 3 attempts" in str(exc_info.value)
+
+
+def test_run_mypy_strict_does_not_retry_real_type_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _patch_sp_run(
+        monkeypatch,
+        [_completed(1, stdout='x.py:1: error: Name "y" is not defined\n')],
+    )
+    with pytest.raises(AssertionError):
+        run_mypy_strict(["x.py"], cwd=tmp_path)
+    assert len(calls) == 1
+
+
+def test_run_mypy_strict_surfaces_real_error_after_transient_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retry that uncovers a real type error reports it cleanly.
+
+    The retry path is justified by *transient* mypyc crashes; if the
+    retry exposes a genuine type error, the failure message must not
+    be tagged with the ``INTERNAL ERROR after N attempts`` prefix
+    (which would mislead the consumer into chasing a phantom crash).
+    """
+    calls = _patch_sp_run(
+        monkeypatch,
+        [
+            _completed(2, stderr=_MYPY_INTERNAL_ERROR_STDERR),
+            _completed(1, stdout='x.py:1: error: Name "y" is not defined\n'),
+        ],
+    )
+    with pytest.raises(AssertionError) as exc_info:
+        run_mypy_strict(["x.py"], cwd=tmp_path)
+    assert len(calls) == 2
+    message = str(exc_info.value)
+    assert "INTERNAL ERROR" not in message
+    assert 'Name "y" is not defined' in message
 
 
 def test_run_ruff_format_check_passes_on_clean(tmp_path: Path) -> None:

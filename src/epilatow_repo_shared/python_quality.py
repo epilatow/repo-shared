@@ -157,6 +157,10 @@ def run_ruff_format_check(targets: Sequence[str], *, cwd: Path) -> None:
         )
 
 
+_MYPY_INTERNAL_ERROR_MARKER = "error: INTERNAL ERROR --"
+_MYPY_MAX_ATTEMPTS = 3
+
+
 def run_mypy_strict(
     targets: Sequence[str],
     *,
@@ -190,6 +194,17 @@ def run_mypy_strict(
     vendored scaffolding (which mirrors content reachable at the
     canonical-path symlinks) doesn't trip mypy's duplicate-module
     detection on the default ``["."]`` walk.
+
+    Every invocation also passes ``--show-traceback`` so a crash
+    leaves a Python traceback in the output for upstream filing
+    instead of just the bare ``INTERNAL ERROR -- ... version: X.Y.Z``
+    line, and crashes that surface mypy's
+    ``error: INTERNAL ERROR --`` banner are retried up to
+    ``_MYPY_MAX_ATTEMPTS`` total attempts before being surfaced as a
+    failure. The mypyc-compiled wheel occasionally crashes on
+    otherwise-clean files (an upstream bug, not a real type error --
+    a standalone re-run of the same command typechecks cleanly), and
+    a one-off crash should not break the consumer's test run.
     """
     if not targets:
         pytest.skip("no mypy targets")
@@ -208,25 +223,39 @@ def run_mypy_strict(
             cmd.append("mypy")
         else:
             cmd = [sys.executable, "-m", "mypy"]
-        cmd.extend(["--strict", "--exclude", _VENDOR_EXCLUDE_RE])
+        cmd.extend(
+            ["--strict", "--show-traceback", "--exclude", _VENDOR_EXCLUDE_RE]
+        )
         if python_version:
             # Set mypy's type-analysis target so semantics match
             # the env's interpreter and follow-imports parsing
             # accepts the same syntax the parser does.
             cmd.extend(["--python-version", python_version])
         cmd.append(target)
-        result = sp.run(
-            cmd,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=sp.LONG_TIMEOUT_SECONDS,
-        )
-        if result.returncode != 0:
-            failures.append(
-                f"--- {target} ---\n{result.stdout}{result.stderr}"
+        for attempt in range(1, _MYPY_MAX_ATTEMPTS + 1):
+            result = sp.run(
+                cmd,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=sp.LONG_TIMEOUT_SECONDS,
             )
+            if result.returncode == 0:
+                break
+            crashed = _MYPY_INTERNAL_ERROR_MARKER in (
+                result.stdout + result.stderr
+            )
+            if crashed and attempt < _MYPY_MAX_ATTEMPTS:
+                continue
+            prefix = (
+                f"--- {target} "
+                f"(mypy INTERNAL ERROR after {attempt} attempts) ---\n"
+                if crashed
+                else f"--- {target} ---\n"
+            )
+            failures.append(f"{prefix}{result.stdout}{result.stderr}")
+            break
     if failures:
         raise AssertionError("mypy strict failed.\n\n" + "\n".join(failures))
 
