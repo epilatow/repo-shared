@@ -37,18 +37,16 @@ from typing import ClassVar
 import pytest
 
 from epilatow_repo_shared import sp
-from epilatow_repo_shared.python_quality import _normalize_exclude_dirs
-
-_DEFAULT_EXCLUDE_DIRS: tuple[str, ...] = (
-    "node_modules",
-    ".venv",
-    ".pytest_cache",
-    ".git",
-    ".claude",
-    "tmp",
-    ".cache",
-    "_repo_shared",
+from epilatow_repo_shared.python_quality import (
+    _git_tracked_files,
+    _normalize_exclude_dirs,
+    _path_has_excluded_dir_segment,
 )
+
+# ``_repo_shared`` is tracked, but the canonical-path symlinks
+# expose its content at a second path, so the markdown formatter
+# would otherwise check it twice.
+_DEFAULT_EXCLUDE_DIRS: tuple[str, ...] = ("_repo_shared",)
 
 
 def _discover_repo_root() -> Path:
@@ -69,15 +67,30 @@ def _walk_markdown(
     root: Path,
     exclude_dirs: Sequence[str],
 ) -> list[Path]:
-    """Yield ``*.md`` real files under ``root``, pruning excluded dirs.
+    """Yield tracked real-file ``*.md`` under ``root``.
 
-    Uses ``os.walk`` with in-place ``dirnames`` mutation so a
-    populated ``.venv/`` / ``_repo_shared/`` is never enumerated.
-    Each entry in ``exclude_dirs`` is a directory name pruned
-    anywhere in the tree; see ``_normalize_exclude_dirs``.
+    Symlinks are dropped so canonical-path aliases over the
+    vendored ``_repo_shared/`` tree don't produce duplicate hits.
+    ``exclude_dirs`` is an additional post-filter; see
+    ``_normalize_exclude_dirs`` and
+    ``_path_has_excluded_dir_segment``.
+
+    Falls back to ``os.walk`` when ``root`` is not a git working
+    tree -- the unit-test case using ``tmp_path``.
     """
     skip = _normalize_exclude_dirs(exclude_dirs)
-    targets: list[Path] = []
+    tracked = _git_tracked_files(root, ".md")
+    if tracked is not None:
+        targets: list[Path] = []
+        for rel in tracked:
+            if _path_has_excluded_dir_segment(rel, skip):
+                continue
+            full = root / rel
+            if full.is_symlink() or not full.is_file():
+                continue
+            targets.append(full)
+        return sorted(targets)
+    targets = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in skip)
         for name in sorted(filenames):

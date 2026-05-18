@@ -63,9 +63,9 @@ into these tests:
   - **`mypy --strict`** -- type check, with per-file `--with` deps resolved
     from each file's PEP 723 `# /// script` block when present.
 
-  Auto-discovers every `.py` under the repo (skipping `_repo_shared/`,
-  `.venv/`, `__pycache__/`, ...). Adding a new module / test file works without
-  a pyproject edit -- discovery finds it on the next run.
+  Discovers every tracked `.py` under the repo, plus a tracked-but-skip
+  post-filter that defaults to `_repo_shared/`. Adding a new module / test file
+  works without a pyproject edit -- discovery finds it on the next run.
 
   `ruff check` / `ruff format --check` default to `--line-length=79` (matching
   the `mdformat` prose wrap below) when the consumer hasn't pinned a value in
@@ -225,10 +225,11 @@ The delivered quality-gate tests read consumer-configured knobs from
 `[tool.repo-shared.<section>]` blocks in your `pyproject.toml`, so future
 repo-shared updates flow through without you having to touch the tests.
 
-The delivered `test_code_quality.py` auto-discovers every `.py` file under the
-repo (skipping `_repo_shared/`, `.venv/`, `__pycache__/`, ...) and parametrizes
-ruff lint + ruff format + `mypy --strict` per file. New files are picked up
-with no pyproject edit. Optional knobs cover the cases discovery alone can't:
+The delivered `test_code_quality.py` discovers every tracked `.py` file under
+the repo, with a tracked-but-skip post-filter that defaults to `_repo_shared/`,
+and parametrizes ruff lint + ruff format + `mypy --strict` per file. New files
+are picked up with no pyproject edit. Optional knobs cover the cases discovery
+alone can't:
 
 ```toml
 [tool.repo-shared.code-quality]
@@ -237,11 +238,11 @@ with no pyproject edit. Optional knobs cover the cases discovery alone can't:
 # find on its own. Regular ``.py`` files do NOT need to be listed here.
 python-targets = ["bin/foo"]            # default []
 
-# Appended to the base discovery exclude set (``_repo_shared``,
-# ``.venv``, ``__pycache__``, etc.). Each entry is a directory NAME
-# that gets pruned anywhere in the tree (not a path prefix). Use for
-# per-repo dirs that don't want lint / type-checking -- code-gen
-# output, coverage reports, sphinx builds, etc.
+# Appended to the base discovery exclude set. Each entry is a
+# directory NAME pruned anywhere in the tree (not a path prefix).
+# Use for tracked-but-skip dirs that don't want lint /
+# type-checking -- code-gen output, vendored bundles you committed,
+# etc.
 extra-exclude-dirs = ["htmlcov", "_build"]    # default []
 
 # Project-wide fallback for files WITHOUT their own PEP 723 ``# /// script``

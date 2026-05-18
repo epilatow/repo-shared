@@ -78,11 +78,8 @@ class CodeQualityOverrides:
     cannot find on its own (``bin/foo``, etc.). It does not restrict
     the discovered set.
 
-    ``extra_exclude_dirs`` is appended to the discovery
-    exclude-prefix list (which already covers ``_repo_shared/``,
-    ``.venv/``, ``__pycache__/``, etc.), so a consumer adds without
-    replacing -- the shared baseline keeps applying after a
-    repo-shared upgrade that grows the default list.
+    ``extra_exclude_dirs`` is appended to the base discovery
+    exclude list, so a consumer adds without replacing.
 
     ``mypy_extra_deps`` and ``mypy_python_version`` are project-wide
     defaults applied to any file *without* a PEP 723 ``# /// script``
@@ -109,11 +106,9 @@ def code_quality_overrides(
       every ``.py`` they contain, but discovery already finds those,
       so the typical use is enumerating extension-less files.
     - ``extra-exclude-dirs`` (list of str, default ``[]``) --
-      appended to the discovery exclude list (which already covers
-      ``_repo_shared/``, ``.venv/``, ``__pycache__/``, etc.). Use to
-      exclude per-repo directories that should not be lint /
-      type-checked (vendored third-party Python, generated code,
-      etc.).
+      appended to the base discovery exclude list. Use to exclude
+      tracked-but-skip directories (vendored third-party Python,
+      generated code, etc.).
     - ``mypy-extra-deps`` (list of str, default ``[]``) -- project-
       wide fallback installed via ``uvx --with`` for files *without*
       their own PEP 723 ``# /// script`` block.
@@ -140,9 +135,7 @@ class MarkdownOverrides:
     """Effective values for ``MdformatCheckBase`` subclass attrs.
 
     ``extra_exclude_dirs`` is appended to the base class' default
-    set -- a consumer adds, never replaces, so the shared baseline
-    (``_repo_shared/``, ``node_modules/`` etc.) keeps applying after
-    a repo-shared upgrade that grows the default list.
+    set, so a consumer adds without replacing.
     """
 
     wrap: int = 79

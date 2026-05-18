@@ -4,11 +4,31 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+
+def git_init_repo(repo: Path) -> None:
+    """``git init`` ``repo`` with a stable user identity.
+
+    Discovery helpers honor ``.gitignore`` via ``git ls-files``, so
+    tests that exercise the gitignore-driven path need a real git
+    repo under ``tmp_path``. Identity is pinned so the init doesn't
+    fall through to the developer's global ``user.email`` /
+    ``user.name`` (or fail if neither is set).
+    """
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "t@t"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "t"], check=True
+    )
+
 
 _pycache_tmpdir = tempfile.mkdtemp(prefix="pytest_pycache_repo_shared_")
 sys.pycache_prefix = _pycache_tmpdir

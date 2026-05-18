@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import git_init_repo
 
 from epilatow_repo_shared import sp
 from epilatow_repo_shared.python_quality import (
@@ -228,25 +229,50 @@ _PEP723_MALFORMED_TOML = """\
 """
 
 
-def test_discover_python_files_skips_default_excludes(tmp_path: Path) -> None:
+def test_discover_python_files_honors_gitignore(tmp_path: Path) -> None:
+    """``.gitignore`` is the source of truth for excluded paths.
+
+    Anything the consumer chose not to track -- virtualenvs, build
+    outputs, sibling worktrees under ``.wt/``, etc. -- is excluded
+    automatically without per-directory hardcoding in repo-shared.
+    """
+    git_init_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text(".venv/\n__pycache__/\n.wt/\n")
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "pkg.py").write_text("")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_x.py").write_text("")
-    (tmp_path / "_repo_shared" / "files").mkdir(parents=True)
-    (tmp_path / "_repo_shared" / "files" / "shadow.py").write_text("")
     (tmp_path / ".venv").mkdir()
     (tmp_path / ".venv" / "vendored.py").write_text("")
     (tmp_path / "__pycache__").mkdir()
     (tmp_path / "__pycache__" / "cached.py").write_text("")
+    (tmp_path / ".wt" / "branch").mkdir(parents=True)
+    (tmp_path / ".wt" / "branch" / "sibling.py").write_text("")
 
     found = discover_python_files(tmp_path)
     assert found == ["src/pkg.py", "tests/test_x.py"]
 
 
+def test_discover_python_files_skips_vendored_repo_shared(
+    tmp_path: Path,
+) -> None:
+    """``_repo_shared/`` is tracked vendored content; the in-tree
+    symlinks expose its files at the canonical path, so the default
+    excludes it to avoid linting the same content twice."""
+    git_init_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "pkg.py").write_text("")
+    (tmp_path / "_repo_shared" / "files").mkdir(parents=True)
+    (tmp_path / "_repo_shared" / "files" / "shadow.py").write_text("")
+
+    found = discover_python_files(tmp_path)
+    assert found == ["src/pkg.py"]
+
+
 def test_discover_python_files_honours_custom_excludes(
     tmp_path: Path,
 ) -> None:
+    git_init_repo(tmp_path)
     (tmp_path / "a.py").write_text("")
     (tmp_path / "vendor").mkdir()
     (tmp_path / "vendor" / "v.py").write_text("")
@@ -259,15 +285,51 @@ def test_discover_python_files_prunes_nested_dir_by_name(
 ) -> None:
     """A bare directory name prunes that directory anywhere in the tree.
 
-    Regression guard: the old prefix-from-root shape would have
-    walked into ``src/.venv/`` and listed its contents; the new
-    name-pruning shape prunes ``.venv`` wherever it appears.
+    Both the gitignore-driven path and the os.walk fallback honor
+    the same semantic so a consumer's ``extra-exclude-dirs`` entry
+    applies whether or not the dir is gitignored.
     """
+    git_init_repo(tmp_path)
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "pkg.py").write_text("")
     (tmp_path / "src" / ".venv").mkdir()
     (tmp_path / "src" / ".venv" / "vendored.py").write_text("")
-    found = discover_python_files(tmp_path)
+    found = discover_python_files(tmp_path, exclude_dirs=[".venv"])
+    assert found == ["src/pkg.py"]
+
+
+def test_discover_python_files_exclude_does_not_match_filename(
+    tmp_path: Path,
+) -> None:
+    """``exclude_dirs`` matches DIRECTORY components, not filenames.
+
+    Regression guard: the ``os.walk`` semantic only ever pruned
+    ``dirnames``, never the basename. A file literally named
+    ``htmlcov.py`` at the top level stays in the discovered set even
+    if a sibling ``htmlcov/`` directory would be excluded.
+    """
+    git_init_repo(tmp_path)
+    (tmp_path / "htmlcov.py").write_text("")
+    (tmp_path / "htmlcov").mkdir()
+    (tmp_path / "htmlcov" / "report.py").write_text("")
+    found = discover_python_files(tmp_path, exclude_dirs=["htmlcov"])
+    assert found == ["htmlcov.py"]
+
+
+def test_discover_python_files_falls_back_to_walk_without_git(
+    tmp_path: Path,
+) -> None:
+    """Without a ``.git`` entry the discovery falls back to os.walk.
+
+    The fallback only excludes the post-filter ``exclude_dirs``, so
+    callers that explicitly pass ``[".venv"]`` still get the dir
+    pruned even outside a git repo.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "pkg.py").write_text("")
+    (tmp_path / ".venv").mkdir()
+    (tmp_path / ".venv" / "v.py").write_text("")
+    found = discover_python_files(tmp_path, exclude_dirs=[".venv"])
     assert found == ["src/pkg.py"]
 
 

@@ -5,9 +5,10 @@ Consumers don't import these directly -- the delivered test (a
 canonical-path symlink into the consumer's vendored
 ``_repo_shared/``) does. The shape of the test is:
 
-- ``discover_python_files`` finds every ``.py`` under the consumer
-  repo (skipping ``_repo_shared/``, ``.venv/``, ``__pycache__/``,
-  ...).
+- ``discover_python_files`` returns every tracked ``.py`` under
+  the consumer repo, plus a tracked-but-skip post-filter for
+  ``_repo_shared/`` (whose content is also reachable via in-tree
+  symlinks).
 - ``resolve_files`` walks the discovered list, reads each file's
   PEP 723 ``# /// script`` block, and returns a ``ResolvedFile`` per
   file with ``deps`` / ``python_version``. Files without a block
@@ -260,20 +261,10 @@ def run_mypy_strict(
         raise AssertionError("mypy strict failed.\n\n" + "\n".join(failures))
 
 
-DEFAULT_IGNORED_DIRS: tuple[str, ...] = (
-    "_repo_shared",
-    ".venv",
-    "venv",
-    ".git",
-    "node_modules",
-    "__pycache__",
-    "dist",
-    "build",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    "tmp",
-)
+# ``_repo_shared`` is tracked, but the canonical-path symlinks
+# expose its content at a second path, so linting both would trip
+# mypy's duplicate-module detection.
+DEFAULT_IGNORED_DIRS: tuple[str, ...] = ("_repo_shared",)
 
 
 def _normalize_exclude_dirs(exclude_dirs: Sequence[str]) -> frozenset[str]:
@@ -316,26 +307,77 @@ def _normalize_exclude_dirs(exclude_dirs: Sequence[str]) -> frozenset[str]:
     return frozenset(result)
 
 
+def _git_tracked_files(repo_root: Path, suffix: str) -> list[str] | None:
+    """Tracked + untracked-not-ignored ``*<suffix>`` files.
+
+    Returns repo-relative POSIX paths or ``None`` when ``repo_root``
+    is not a git working tree. Callers pass the leading dot in
+    ``suffix`` (e.g. ``.py``).
+    """
+    # ``.exists()`` (not ``.is_dir()``): a linked worktree's ``.git``
+    # is a regular file pointing at the main repo's ``gitdir``.
+    if not (repo_root / ".git").exists():
+        return None
+    try:
+        result = sp.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+                f"*{suffix}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=sp.SHORT_TIMEOUT_SECONDS,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    if not result.stdout:
+        return []
+    return [entry for entry in result.stdout.split("\0") if entry]
+
+
+def _path_has_excluded_dir_segment(path: str, skip: frozenset[str]) -> bool:
+    """True if any DIRECTORY segment of ``path`` is in ``skip``.
+
+    Mirrors the ``os.walk`` ``dirnames[:]`` pruning semantic: only
+    directory components are matched, never the filename itself, so
+    a skip entry like ``"htmlcov"`` excludes ``htmlcov/x.py`` but
+    keeps a top-level file literally named ``htmlcov.py``.
+    """
+    return any(segment in skip for segment in path.split("/")[:-1])
+
+
 def discover_python_files(
     repo_root: Path,
     *,
     exclude_dirs: Sequence[str] = DEFAULT_IGNORED_DIRS,
 ) -> list[str]:
-    """Return all ``.py`` files under ``repo_root``, repo-relative.
+    """Return tracked ``.py`` files under ``repo_root``, repo-relative.
 
-    Walks the tree top-down with ``os.walk`` and prunes
-    excluded directory names in place (via ``dirnames[:] = ...``)
-    so the kernel never enumerates the contents of ``.venv/``,
-    ``_repo_shared/``, ``node_modules/``, etc. Each entry in
-    ``exclude_dirs`` is treated as a directory NAME pruned
-    anywhere in the tree (not a path prefix). Trailing ``/`` is
-    tolerated for backwards compatibility; multi-segment entries
-    raise ``ValueError``.
+    ``exclude_dirs`` is an additional post-filter for tracked-but-
+    skip directories; see ``_normalize_exclude_dirs`` for the
+    accepted entry shapes and ``_path_has_excluded_dir_segment`` for
+    the match semantic. Sorted for stable parametrize IDs.
 
-    Sorted for stable parametrize order so test IDs don't shuffle
-    between runs.
+    Falls back to ``os.walk`` when ``repo_root`` is not a git
+    working tree -- the unit-test case using ``tmp_path``.
     """
     skip = _normalize_exclude_dirs(exclude_dirs)
+    tracked = _git_tracked_files(repo_root, ".py")
+    if tracked is not None:
+        return sorted(
+            p for p in tracked if not _path_has_excluded_dir_segment(p, skip)
+        )
     found: list[str] = []
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = sorted(d for d in dirnames if d not in skip)

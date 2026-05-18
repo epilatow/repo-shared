@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import git_init_repo
 
 from epilatow_repo_shared.markdown import (
     MarkdownlintCheckBase,
@@ -82,6 +83,23 @@ def test_walk_markdown_rejects_multi_segment_entry(tmp_path: Path) -> None:
     """
     with pytest.raises(ValueError, match="contains '/'"):
         _walk_markdown(tmp_path, exclude_dirs=("docs/_build",))
+
+
+def test_walk_markdown_honors_gitignore(tmp_path: Path) -> None:
+    """When ``root`` is a git working tree, ``.gitignore`` controls
+    what's enumerated -- a sibling worktree under ``.wt/`` or any
+    other ignored content is excluded automatically."""
+    git_init_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text(".wt/\nbuild/\n")
+    (tmp_path / "a.md").write_text("# a\n")
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "out.md").write_text("# skip\n")
+    (tmp_path / ".wt" / "branch").mkdir(parents=True)
+    (tmp_path / ".wt" / "branch" / "sibling.md").write_text("# skip\n")
+
+    found = _walk_markdown(tmp_path, exclude_dirs=())
+    rels = [p.relative_to(tmp_path).as_posix() for p in found]
+    assert rels == ["a.md"]
 
 
 def _ensure_mdformat() -> None:
