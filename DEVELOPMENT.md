@@ -118,12 +118,20 @@ set, so the same set of target versions deterministically lands on the same
 branch -- a re-run after a red test resumes the existing worktree instead of
 rebuilding. The worktree branch is `repo-shared/tool-bump-<hash>` off
 `origin/<default>`, applies all available bumps to `pyproject.toml`, runs
-`uv lock`, runs the dogfood suite, and commits in the worktree if green. On a
-red test run the worktree is left in place so the maintainer can `cd` in and
-debug. With `--push`, the bump branch ff-merges into the maintainer's default
-branch and pushes; `--keep-worktree` retains the worktree after push.
-`git push --dry-run` runs before any bump work so an upstream rejection fails
-fast.
+`uv lock`, runs the dogfood subset (`uv run --extra test pytest shared/tests`),
+and commits in the worktree if green. On a red test run the worktree is left in
+place so the maintainer can `cd` in and debug. With `--push`, the bump branch
+ff-merges into the maintainer's default branch and pushes; `--keep-worktree`
+retains the worktree after push. `git push --dry-run` runs before any bump work
+so an upstream rejection fails fast.
+
+The dogfood is scoped to `shared/tests` -- the quality gates that actually
+exercise the bumped ruff / mypy / mdformat against every tracked file -- rather
+than the full `uv run --extra test pytest`. The full suite additionally drives
+the CLI integration tests under `tests/`, each of which spawns a nested
+`upgrade` / `upgrade-tools` that builds a venv and runs its own dogfood; that
+nesting is redundant for validating a tool bump and slow enough under
+contention to exhaust the subprocess timeout.
 
 When `uv lock` rejects the full bump set -- the common shape is a tool's new
 major release landing on PyPI before its plugin ecosystem catches up, e.g.

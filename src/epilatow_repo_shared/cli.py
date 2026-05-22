@@ -807,8 +807,16 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
         print(f"resuming existing bump worktree at {wt_path}.")
 
     print("running dogfood suite against the bumped pins...")
+    # Scope to the quality-gate subset (``shared/tests``) rather than
+    # the full suite. A tool-version bump only changes what ruff /
+    # mypy / mdformat report, and ``shared/tests`` runs them against
+    # every tracked file -- the exact signal a bump needs. The full
+    # suite additionally drives the CLI integration tests, each of
+    # which spawns a nested ``upgrade(-tools)`` that builds a venv and
+    # runs its own dogfood; that nesting is redundant for a tool bump
+    # and slow enough under contention to exhaust the timeout.
     test_result = sp.run(
-        ["uv", "run", "--extra", "test", "pytest"],
+        ["uv", "run", "--extra", "test", "pytest", "shared/tests"],
         cwd=wt_path,
         check=False,
         timeout=sp.LONG_TIMEOUT_SECONDS,

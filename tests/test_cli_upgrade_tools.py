@@ -3,18 +3,19 @@
 
 ``upgrade-tools`` only makes sense from inside a repo-shared clone: it
 inspects ``[project] dependencies``, queries PyPI for newer versions,
-and applies bumps in a worktree. The tests build a *fake
-repo-shared clone* in tmp_path (a real ``git clone`` of this repo
-with ``tests/`` trimmed to a smoke test to avoid recursion when the
-worktree-side dogfood suite runs), patch
+and applies bumps in a worktree. The tests build a *fake repo-shared
+clone* in tmp_path (a real ``git clone`` of this repo), patch
 ``_running_from_local_repo_shared`` to point at it, and stub PyPI
-lookups via ``monkeypatch`` so the tests don't depend on real
-network state.
+lookups via ``monkeypatch`` so the tests don't depend on real network
+state.
 
-Trimming ``tests/`` matters: the dogfood step in ``_cmd_upgrade_tools``
-runs ``uv run --extra test pytest tests/`` inside the worktree, and
-if those tests were still these integration tests, every bump would
-recurse into spawning more bump worktrees.
+The worktree-side dogfood in ``_cmd_upgrade_tools`` runs
+``uv run --extra test pytest shared/tests`` -- the quality-gate
+subset, which ``test_code_quality`` parametrizes per tracked ``.py``
+file. The fixture trims the clone's ``tests/`` to a single smoke test
+so that per-file sweep stays small and the nested dogfood runs fast;
+the dogfood-failure case instead drops a deliberately failing test
+into ``shared/tests/``, where the scoped dogfood will run it.
 """
 
 from __future__ import annotations
@@ -33,6 +34,11 @@ SMOKE_TEST = """\
 def test_smoke_in_worktree_dogfood() -> None:
     assert True
 """
+# Dropped into the clone's ``shared/tests/`` for the dogfood-failure
+# case. ``test_code_quality`` also lints / type-checks this file, so it
+# must stay ruff- and mypy-clean: the integration test relies on the
+# dogfood going red on the deliberate ``AssertionError``, not on a
+# spurious quality-gate failure.
 FAILING_TEST = """\
 def test_deliberately_failing_dogfood_test() -> None:
     # Used by an integration test to assert that a failing dogfood
@@ -68,15 +74,17 @@ def _build_fake_clone(
     tmp_path: Path,
     *,
     pin_overrides: dict[str, str] | None = None,
-    smoke_test_content: str = SMOKE_TEST,
+    dogfood_failure: bool = False,
 ) -> Path:
     """Clone repo-shared into ``tmp_path/clone`` and rewire it for testing.
 
     Steps:
     - Real ``git clone`` (so package layout + .git history are valid).
-    - Replace ``tests/`` with a single smoke test (so the worktree-side
-      dogfood ``pytest tests/`` doesn't recurse into these integration
-      tests when running in CI).
+    - Replace ``tests/`` with a single smoke test, keeping the per-file
+      ``test_code_quality`` sweep of the worktree-side dogfood small.
+    - When ``dogfood_failure`` is set, drop a deliberately failing test
+      into ``shared/tests/`` so the scoped dogfood
+      (``pytest shared/tests``) runs it and reports red.
     - Apply any ``pin_overrides`` to ``[project] dependencies`` so the
       "bump available" case can mock PyPI to a known-installable older
       version of a real package.
@@ -97,7 +105,10 @@ def _build_fake_clone(
             subprocess.run(["rm", "-rf", str(child)], check=True)
         else:
             child.unlink()
-    (tests_dir / "test_smoke.py").write_text(smoke_test_content)
+    (tests_dir / "test_smoke.py").write_text(SMOKE_TEST)
+    if dogfood_failure:
+        fail_path = clone / "shared" / "tests" / "test_deliberate_failure.py"
+        fail_path.write_text(FAILING_TEST)
 
     if pin_overrides:
         pyproject = clone / "pyproject.toml"
@@ -386,7 +397,7 @@ def test_upgrade_tools_dogfood_failure_leaves_worktree(
     clone = _build_fake_clone(
         tmp_path,
         pin_overrides={"ruff": "0.5.0"},
-        smoke_test_content=FAILING_TEST,
+        dogfood_failure=True,
     )
     monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
     _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
