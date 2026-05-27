@@ -258,9 +258,12 @@ extra-exclude-dirs = ["build"]          # appended to the base markdown default
 
 For files that need their own mypy environment (e.g. an HA-coupled module file
 that needs `pytest-homeassistant-custom-component` resolvable for real
-`homeassistant.*` types), add a PEP 723 `# /// script` block right under the
-file's docstring -- the test resolver reads it and spawns
-`uvx --python <X> --with <dep>... mypy --strict <file>` for just that file:
+`homeassistant.*` types), add a PEP 723 `# /// script` block as a top-level
+comment -- the test resolver reads it and spawns
+`uvx --python <X> --with <dep>... mypy --strict <file>` for just that file. The
+block may sit anywhere a top-level comment can (after the module docstring or
+imports, or in a shebang prelude), matching how uv locates it; right under the
+docstring is the convention here:
 
 ```python
 """HA-coupled module."""

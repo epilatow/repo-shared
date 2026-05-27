@@ -393,15 +393,14 @@ def test_extract_pep723_metadata_returns_none_on_malformed_toml(
 def test_extract_pep723_metadata_ignores_opener_inside_string_literal(
     tmp_path: Path,
 ) -> None:
-    """An opener inside Python code (after a docstring / def) is ignored.
+    """An opener inside a string literal is ignored.
 
-    PEP 723 places the block at the top of the file (after the
-    shebang). Once the extractor sees a non-comment line, it stops
-    scanning for the opener. Without this guard, a test file that
-    embeds a ``# /// script`` fixture inside a triple-quoted string
-    would be misidentified as an actual PEP 723 script -- mypy
-    would then run with the fixture's deps instead of the project
-    env, producing spurious "module not found" errors.
+    The opener is located as a column-0 ``COMMENT`` token, so a
+    ``# /// script`` embedded in a triple-quoted string (a PEP 723
+    fixture in a test file) is a ``STRING`` token and never matches.
+    Without this, the linter would run mypy with the fixture's deps
+    instead of the project env, producing spurious "module not
+    found" errors.
     """
     target = tmp_path / "test_with_fixture.py"
     target.write_text(
@@ -417,6 +416,88 @@ def test_extract_pep723_metadata_ignores_opener_inside_string_literal(
         "'''\n"
     )
     assert extract_pep723_metadata(target) is None
+
+
+def test_extract_pep723_metadata_finds_block_after_docstring(
+    tmp_path: Path,
+) -> None:
+    """A block below the module docstring resolves (uv-compatible).
+
+    Module-only files lead with a docstring, so their PEP 723 block
+    naturally lands after it -- not in a shebang prelude. The opener
+    is a real top-level comment there, so it must be found.
+    """
+    target = tmp_path / "module.py"
+    target.write_text(
+        '"""HA-coupled module."""\n\n'
+        "# /// script\n"
+        '# requires-python = ">=3.14"\n'
+        '# dependencies = ["voluptuous"]\n'
+        "# ///\n\n"
+        "from __future__ import annotations\n"
+    )
+    assert extract_pep723_metadata(target) == Pep723Metadata(
+        deps=("voluptuous",), python_version="3.14"
+    )
+
+
+def test_extract_pep723_metadata_finds_block_after_imports(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "after_imports.py"
+    target.write_text(
+        '"""Module."""\n\n'
+        "import os\n\n"
+        "# /// script\n"
+        '# dependencies = ["packaging"]\n'
+        "# ///\n"
+    )
+    assert extract_pep723_metadata(target) == Pep723Metadata(
+        deps=("packaging",), python_version=None
+    )
+
+
+def test_extract_pep723_metadata_ignores_indented_opener(
+    tmp_path: Path,
+) -> None:
+    """An indented opener is not a top-level block, so it is ignored.
+
+    PEP 723 scopes the block to top-level comments; a ``# /// script``
+    nested inside a ``def`` is a column-shifted ``COMMENT`` token and
+    must not be mistaken for a script block.
+    """
+    target = tmp_path / "indented.py"
+    target.write_text(
+        '"""Module."""\n\n\n'
+        "def f() -> None:\n"
+        "    # /// script\n"
+        '    # dependencies = ["x"]\n'
+        "    # ///\n"
+        "    pass\n"
+    )
+    assert extract_pep723_metadata(target) is None
+
+
+def test_extract_pep723_metadata_prelude_fallback_when_untokenizable(
+    tmp_path: Path,
+) -> None:
+    """An un-tokenizable file still resolves a prelude block.
+
+    A syntax error (here an unterminated string) makes tokenizing
+    raise; the opener search falls back to the shebang + comment
+    prelude rather than crashing, so a top-of-file block still
+    resolves and mypy gets its deps even on a file it would reject.
+    """
+    target = tmp_path / "broken_syntax.py"
+    target.write_text(
+        "# /// script\n"
+        '# dependencies = ["packaging"]\n'
+        "# ///\n"
+        '"""unterminated\n'
+    )
+    assert extract_pep723_metadata(target) == Pep723Metadata(
+        deps=("packaging",), python_version=None
+    )
 
 
 def test_resolve_files_uses_pep723_when_present(tmp_path: Path) -> None:

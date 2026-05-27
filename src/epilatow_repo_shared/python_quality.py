@@ -30,9 +30,11 @@ PEP 723 in the file -- never a Python import:
 from __future__ import annotations
 
 import dataclasses
+import io
 import os
 import re
 import sys
+import tokenize
 import tomllib
 from collections.abc import Sequence
 from pathlib import Path
@@ -409,44 +411,84 @@ class Pep723Metadata:
 def _extract_pep723_body(text: str) -> str | None:
     """Return the body TOML text of a PEP 723 ``script`` block, or ``None``.
 
-    Line-by-line scan rather than a regex. The PEP-style opener /
-    body / closer pattern is trivially decidable by reading one line
-    at a time, and avoids the catastrophic-backtracking risk an
-    alternation-heavy regex over a multi-thousand-line file would
-    carry.
+    The ``# /// script`` opener is located by tokenizing the source
+    and matching a genuine top-level (column 0) ``COMMENT`` token, so
+    the block may sit anywhere a top-level comment can -- after the
+    module docstring or imports, not only in the shebang prelude.
+    Matching a comment *token* rather than scanning raw lines means a
+    ``# /// script`` sitting inside a string literal (a PEP 723
+    fixture embedded in a test) is a ``STRING`` token and is ignored.
+    This mirrors uv's whole-file opener search while keeping the
+    linter safe against fixture data.
 
-    PEP 723 recommends the block live at the top of the file (after
-    the shebang, if any). The scan honors that: it looks for the
-    ``# /// script`` opener only among the top-of-file shebang +
-    comment + blank-line prelude. Once a non-comment line appears
-    (a docstring, a ``def``, an ``import``, ...) the file is decided
-    to not be a PEP 723 script. This is what keeps test files that
-    embed ``# /// script`` fixtures inside string literals from being
-    misidentified as actual PEP 723 scripts.
+    Once the opener is found, body lines must be ``#`` (a blank TOML
+    line, becomes ``""``) or ``# <content>``; the block ends at the
+    ``# ///`` closer. Anything else marks the block malformed and
+    returns ``None``.
+    """
+    lines = [raw.rstrip("\r") for raw in text.splitlines()]
+    opener_idx = _find_pep723_opener(text, lines)
+    if opener_idx is None:
+        return None
+    return _collect_pep723_body(lines, opener_idx)
+
+
+def _find_pep723_opener(text: str, lines: Sequence[str]) -> int | None:
+    """Index in ``lines`` of the ``# /// script`` opener, or ``None``.
+
+    Prefers a genuine column-0 ``COMMENT`` token so an opener inside
+    a string literal is skipped. Tokenizing requires parseable
+    source; when it fails (a syntax error mypy would reject anyway),
+    the opener is sought in the shebang + comment + blank-line
+    prelude only -- the conservative subset that needs no tokenizing.
+    """
+    try:
+        reader = io.StringIO(text).readline
+        for tok in tokenize.generate_tokens(reader):
+            if (
+                tok.type == tokenize.COMMENT
+                and tok.start[1] == 0
+                and tok.string.rstrip() == _PEP723_OPEN
+            ):
+                return tok.start[0] - 1
+        return None
+    except (tokenize.TokenError, SyntaxError):
+        return _find_pep723_opener_in_prelude(lines)
+
+
+def _find_pep723_opener_in_prelude(lines: Sequence[str]) -> int | None:
+    """Index of the opener within the top-of-file comment prelude.
+
+    Stops at the first non-comment line, so only a block among the
+    leading shebang / comment / blank lines is found. Used as the
+    fallback when the source can't be tokenized.
+    """
+    for idx, line in enumerate(lines):
+        if line.rstrip() == _PEP723_OPEN:
+            return idx
+        stripped = line.strip()
+        if stripped == "" or stripped.startswith("#"):
+            continue
+        return None
+    return None
+
+
+def _collect_pep723_body(lines: Sequence[str], opener_idx: int) -> str | None:
+    """Body TOML text between the opener and the ``# ///`` closer.
 
     Body lines must be ``#`` (a blank TOML line, becomes ``""``) or
     ``# <content>``; anything else marks the block malformed and
-    returns ``None``.
+    returns ``None``. An unclosed block (no ``# ///``) is ``None``.
     """
-    in_block = False
     body: list[str] = []
-    for raw_line in text.splitlines():
-        line = raw_line.rstrip("\r")
-        if in_block:
-            if line.rstrip() == _PEP723_CLOSE:
-                return "\n".join(body)
-            if line == "#":
-                body.append("")
-                continue
-            if line.startswith("# "):
-                body.append(line[2:])
-                continue
-            return None
-        if line.rstrip() == _PEP723_OPEN:
-            in_block = True
+    for line in lines[opener_idx + 1 :]:
+        if line.rstrip() == _PEP723_CLOSE:
+            return "\n".join(body)
+        if line == "#":
+            body.append("")
             continue
-        stripped = line.strip()
-        if stripped == "" or stripped.startswith("#"):
+        if line.startswith("# "):
+            body.append(line[2:])
             continue
         return None
     return None
@@ -455,8 +497,8 @@ def _extract_pep723_body(text: str) -> str | None:
 def extract_pep723_metadata(path: Path) -> Pep723Metadata | None:
     """Return PEP 723 metadata from ``path`` or ``None`` if absent.
 
-    Reads the ``# /// script`` ... ``# ///`` block at the top of a
-    Python file and returns its ``dependencies`` plus a
+    Reads the ``# /// script`` ... ``# ///`` top-level comment block
+    from a Python file and returns its ``dependencies`` plus a
     ``--python-version`` argument derived from ``requires-python``
     (the leading ``MAJOR.MINOR``). Returns ``None`` for files
     without a block, with a malformed block, or with a block that
@@ -584,8 +626,9 @@ def resolve_files(
 
     The PEP 723 ``# /// script`` block in the file is the sole
     per-file dep declaration; consumers that need to add
-    ``--with`` deps to mypy for a specific module file put the
-    block at the top of that file. Files without a block fall back
+    ``--with`` deps to mypy for a specific module file add the
+    block as a top-level comment in that file. Files without a block
+    fall back
     to ``default_deps`` / ``default_python_version`` -- which a
     consumer typically leaves at the empty defaults so plain
     ``mypy --strict`` (in the project venv) handles the catch-all.
