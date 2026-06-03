@@ -9,8 +9,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
-
 
 def git_init_repo(repo: Path) -> None:
     """``git init`` ``repo`` with a stable user identity.
@@ -35,7 +33,7 @@ sys.pycache_prefix = _pycache_tmpdir
 sys.dont_write_bytecode = True
 
 
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+def pytest_sessionfinish() -> None:
     shutil.rmtree(_pycache_tmpdir, ignore_errors=True)
     repo_root = Path(__file__).resolve().parent.parent
     for cache in repo_root.rglob("__pycache__"):

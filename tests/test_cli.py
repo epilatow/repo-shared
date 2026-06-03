@@ -209,7 +209,7 @@ def test_read_locked_sha_extracts_from_uv_export(
 
 
 def test_read_locked_sha_returns_none_without_lockfile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     # No uv.lock; ``_read_locked_sha`` should short-circuit without
     # shelling out (subprocess call is not stubbed -- if it ran the

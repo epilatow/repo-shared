@@ -212,8 +212,8 @@ def test_upgrade_tools_no_op_when_pypi_matches_current_pins(
     assert not wt_parent.exists()
 
 
+@pytest.mark.usefixtures("fake_clone")
 def test_upgrade_tools_only_filter_excluding_everything_is_config_error(
-    fake_clone: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     exit_code = _run_cli(["upgrade-tools", "--only", "nonexistent-pkg"])

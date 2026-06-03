@@ -18,9 +18,12 @@ from conftest import git_init_repo
 from epilatow_repo_shared import sp
 from epilatow_repo_shared.python_quality import (
     DEFAULT_RUFF_LINE_LENGTH,
+    DEFAULT_RUFF_SELECT,
     Pep723Metadata,
     ResolvedFile,
     _consumer_has_ruff_line_length,
+    _consumer_selects_ruff_rules,
+    _ruff_extend_select_args,
     _ruff_line_length_args,
     discover_python_files,
     extract_pep723_metadata,
@@ -41,6 +44,22 @@ def add(a: int, b: int) -> int:
 
 _DIRTY_PY_WITH_BAD_IMPORT = """import os, sys
 """
+
+
+_UNUSED_ARG_PY = '''"""Module with an unused function argument."""
+
+
+def greet(name: str, unused: int) -> str:
+    return f"hi {name}"
+'''
+
+
+_UNDERSCORE_ARG_PY = '''"""Underscore-prefixed unused argument."""
+
+
+def greet(name: str, _unused: int) -> str:
+    return f"hi {name}"
+'''
 
 
 def test_run_ruff_lint_passes_on_clean(tmp_path: Path) -> None:
@@ -690,3 +709,110 @@ def test_ruff_line_length_args_suppresses_flag_when_consumer_set(
 ) -> None:
     (tmp_path / "ruff.toml").write_text("line-length = 88\n")
     assert _ruff_line_length_args(tmp_path) == []
+
+
+def test_consumer_selects_ruff_rules_finds_pyproject_lint_select(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n'
+        '[tool.ruff.lint]\nselect = ["E", "F"]\n'
+    )
+    assert _consumer_selects_ruff_rules(tmp_path) is True
+
+
+def test_consumer_selects_ruff_rules_finds_legacy_top_level_select(
+    tmp_path: Path,
+) -> None:
+    """Pre-lint-table ruff put select directly under [tool.ruff]."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n'
+        '[tool.ruff]\nselect = ["E", "F"]\n'
+    )
+    assert _consumer_selects_ruff_rules(tmp_path) is True
+
+
+def test_consumer_selects_ruff_rules_finds_ruff_toml_lint_select(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "ruff.toml").write_text('[lint]\nselect = ["E", "F"]\n')
+    assert _consumer_selects_ruff_rules(tmp_path) is True
+
+
+def test_consumer_selects_ruff_rules_finds_ruff_toml_top_level_select(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "ruff.toml").write_text('select = ["E", "F"]\n')
+    assert _consumer_selects_ruff_rules(tmp_path) is True
+
+
+def test_consumer_selects_ruff_rules_ignores_extend_select_only(
+    tmp_path: Path,
+) -> None:
+    """extend-select augments the injected default; it does not own it.
+
+    A repo that only sets extend-select (e.g. to add RUF059) keeps
+    receiving DEFAULT_RUFF_SELECT and layers its additions on top.
+    """
+    (tmp_path / "ruff.toml").write_text('[lint]\nextend-select = ["RUF059"]\n')
+    assert _consumer_selects_ruff_rules(tmp_path) is False
+
+
+def test_consumer_selects_ruff_rules_ruff_toml_shadows_pyproject(
+    tmp_path: Path,
+) -> None:
+    """ruff.toml shadows pyproject's [tool.ruff.lint] entirely."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n'
+        '[tool.ruff.lint]\nselect = ["E", "F"]\n'
+    )
+    (tmp_path / "ruff.toml").write_text('[lint]\nextend-select = ["RUF059"]\n')
+    assert _consumer_selects_ruff_rules(tmp_path) is False
+
+
+def test_consumer_selects_ruff_rules_returns_false_with_no_config(
+    tmp_path: Path,
+) -> None:
+    assert _consumer_selects_ruff_rules(tmp_path) is False
+
+
+def test_ruff_extend_select_args_supplies_default_when_consumer_unset(
+    tmp_path: Path,
+) -> None:
+    assert _ruff_extend_select_args(tmp_path) == [
+        f"--extend-select={','.join(DEFAULT_RUFF_SELECT)}"
+    ]
+
+
+def test_ruff_extend_select_args_suppressed_when_consumer_pins_select(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "ruff.toml").write_text('select = ["E", "F"]\n')
+    assert _ruff_extend_select_args(tmp_path) == []
+
+
+def test_run_ruff_lint_flags_unused_argument(tmp_path: Path) -> None:
+    """The injected ARG rule fires for a repo on the defaults."""
+    (tmp_path / "unused_arg.py").write_text(_UNUSED_ARG_PY)
+    with pytest.raises(AssertionError):
+        run_ruff_lint(["unused_arg.py"], cwd=tmp_path)
+
+
+def test_run_ruff_lint_allows_underscore_unused_argument(
+    tmp_path: Path,
+) -> None:
+    """A leading underscore silences ARG via ruff's dummy-variable-rgx."""
+    (tmp_path / "underscore_arg.py").write_text(_UNDERSCORE_ARG_PY)
+    run_ruff_lint(["underscore_arg.py"], cwd=tmp_path)
+
+
+def test_run_ruff_lint_arg_suppressed_when_consumer_pins_select(
+    tmp_path: Path,
+) -> None:
+    """A consumer that owns select doesn't receive the injected ARG."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n'
+        '[tool.ruff.lint]\nselect = ["F"]\n'
+    )
+    (tmp_path / "unused_arg.py").write_text(_UNUSED_ARG_PY)
+    run_ruff_lint(["unused_arg.py"], cwd=tmp_path)

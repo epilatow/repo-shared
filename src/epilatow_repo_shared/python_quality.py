@@ -53,6 +53,27 @@ _VENDOR_EXCLUDE_RE = r"^_repo_shared/"
 
 DEFAULT_RUFF_LINE_LENGTH = 79
 
+# The canonical ruff lint rule set repo-shared enforces by default.
+# Injected via ``--extend-select`` (see ``_ruff_extend_select_args``)
+# when the consumer hasn't declared their own ``select``, so a repo
+# that just uses the defaults gets the whole standard set, evolved
+# centrally here. ``ARG`` (flake8-unused-arguments) flags unused
+# function / method / lambda parameters; a deliberately-unused
+# parameter is silenced with a leading underscore (ruff's
+# ``dummy-variable-rgx`` default), a side-effect-only pytest fixture
+# with ``@pytest.mark.usefixtures`` (its parameter name can't be
+# underscored without breaking fixture resolution), or a single line
+# with a ``noqa`` directive naming the rule (``ARG001`` etc.).
+DEFAULT_RUFF_SELECT: tuple[str, ...] = (
+    "E",
+    "F",
+    "W",
+    "I",
+    "B",
+    "UP",
+    "ARG",
+)
+
 
 def _consumer_has_ruff_line_length(repo_root: Path) -> bool:
     """True if the consumer pins a ``line-length`` ruff would read.
@@ -94,6 +115,62 @@ def _ruff_line_length_args(repo_root: Path) -> list[str]:
     return ["--line-length", str(DEFAULT_RUFF_LINE_LENGTH)]
 
 
+def _table_pins_select(table: object) -> bool:
+    """True if ``table`` is a ruff config table that pins ``select``.
+
+    Only a literal ``select`` marks the consumer as owning their rule
+    set. ``extend-select`` augments whatever base is active (including
+    the injected default), so it does NOT count -- a consumer using
+    only ``extend-select`` keeps receiving ``DEFAULT_RUFF_SELECT`` and
+    layers their additions on top.
+    """
+    return isinstance(table, dict) and "select" in table
+
+
+def _consumer_selects_ruff_rules(repo_root: Path) -> bool:
+    """True if the consumer pins their own ruff lint ``select``.
+
+    Mirrors ruff's config-file precedence the same way
+    ``_consumer_has_ruff_line_length`` does: ``ruff.toml`` wins over
+    ``[tool.ruff]`` in ``pyproject.toml`` (when both exist, ruff uses
+    ``ruff.toml`` entirely). In a ``ruff.toml`` the lint table is
+    ``[lint]`` (or, legacy, top level); in ``pyproject.toml`` it is
+    ``[tool.ruff.lint]`` (or, legacy, ``[tool.ruff]``).
+
+    The delivered ruff invocation injects ``DEFAULT_RUFF_SELECT`` via
+    ``--extend-select`` ONLY when this returns ``False`` -- a consumer
+    who owns ``select`` governs their rule set entirely (and adds
+    ``ARG`` to their own ``select`` to keep it).
+    """
+    ruff_toml = repo_root / "ruff.toml"
+    if ruff_toml.is_file():
+        try:
+            doc = tomllib.loads(ruff_toml.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError:
+            return False
+        return _table_pins_select(doc) or _table_pins_select(doc.get("lint"))
+    pyproject = repo_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    try:
+        doc = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError:
+        return False
+    tool_ruff = doc.get("tool", {}).get("ruff", {})
+    if not isinstance(tool_ruff, dict):
+        return False
+    return _table_pins_select(tool_ruff) or _table_pins_select(
+        tool_ruff.get("lint")
+    )
+
+
+def _ruff_extend_select_args(repo_root: Path) -> list[str]:
+    """``["--extend-select=<set>"]`` unless the consumer pins ``select``."""
+    if _consumer_selects_ruff_rules(repo_root):
+        return []
+    return [f"--extend-select={','.join(DEFAULT_RUFF_SELECT)}"]
+
+
 def run_ruff_lint(targets: Sequence[str], *, cwd: Path) -> None:
     """Run ``ruff check`` on ``targets``; raise on failure.
 
@@ -101,6 +178,17 @@ def run_ruff_lint(targets: Sequence[str], *, cwd: Path) -> None:
     matching the prose default) when the consumer hasn't pinned one
     in ``ruff.toml`` or ``[tool.ruff]``. A consumer's explicit value
     always wins -- the flag is suppressed in that case.
+
+    Injects ``DEFAULT_RUFF_SELECT`` via ``--extend-select`` so a repo
+    that hasn't curated its own ``select`` enforces the canonical rule
+    set (including ``ARG`` for unused arguments). A consumer that pins
+    ``select`` takes full control and the injection is suppressed (see
+    ``_consumer_selects_ruff_rules``); a consumer's ``extend-select``
+    adds further rules on top. A config-file ``ignore`` /
+    ``extend-ignore`` does NOT drop an injected rule -- a command-line
+    ``--extend-select`` overrides config ignores -- so a single
+    injected rule is silenced only with a per-line ``noqa`` or by
+    pinning ``select``.
     """
     if not targets:
         pytest.skip("no ruff targets")
@@ -112,6 +200,7 @@ def run_ruff_lint(targets: Sequence[str], *, cwd: Path) -> None:
             "check",
             f"--exclude={_VENDOR_EXCLUDE_RE}",
             *_ruff_line_length_args(cwd),
+            *_ruff_extend_select_args(cwd),
             *targets,
         ],
         cwd=cwd,
