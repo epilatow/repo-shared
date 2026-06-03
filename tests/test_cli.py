@@ -87,6 +87,18 @@ def test_args_parser_upgrade_with_sha() -> None:
     assert args.sha == "abc1234"
 
 
+def test_args_parser_upgrade_base_defaults_none() -> None:
+    parser = args_parser()
+    args = parser.parse_args(["upgrade", "abc1234"])
+    assert args.base is None
+
+
+def test_args_parser_upgrade_base() -> None:
+    parser = args_parser()
+    args = parser.parse_args(["upgrade", "abc1234", "--base", "main"])
+    assert args.base == "main"
+
+
 def test_snapshot_empty_when_no_vendor_dir(tmp_path: Path) -> None:
     assert _snapshot_vendored_paths(tmp_path) == set()
 

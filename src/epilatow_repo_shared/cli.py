@@ -1007,7 +1007,11 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
             "consumer has an ``origin`` remote with HEAD set."
         )
         return ExitCode.ERROR
-    upstream_ref = f"origin/{default_branch}"
+    # The worktree (and the staleness ff-check) build on this ref;
+    # ``--base`` overrides the origin default so an upgrade can sit on
+    # top of local work that isn't pushed yet. The push target on
+    # ``--push`` stays the local ``default_branch`` either way.
+    upstream_ref = args.base or f"origin/{default_branch}"
 
     if args.push and not _can_push(consumer_root, default_branch):
         _eprint(
@@ -1771,9 +1775,9 @@ def args_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "if an existing update worktree carries uncommitted "
-            "changes, drop it anyway and recreate fresh on origin's "
-            "default branch. Without this, dirty worktrees block "
-            "the upgrade so debug edits aren't silently dropped."
+            "changes, drop it anyway and recreate fresh on the upgrade "
+            "base. Without this, dirty worktrees block the upgrade so "
+            "debug edits aren't silently dropped."
         ),
     )
     p_up.add_argument(
@@ -1782,6 +1786,17 @@ def args_parser() -> argparse.ArgumentParser:
         help=(
             "after a successful --push, leave the update worktree "
             "and branch in place. Default is to prune both."
+        ),
+    )
+    p_up.add_argument(
+        "--base",
+        default=None,
+        metavar="REF",
+        help=(
+            "git ref to build the update worktree on top of "
+            "(default: origin's default branch). Use to base the "
+            "upgrade on local, possibly-unpushed work -- e.g. "
+            "``--base main`` or ``--base HEAD``."
         ),
     )
 

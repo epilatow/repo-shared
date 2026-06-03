@@ -226,6 +226,13 @@ Useful flags:
   changes and rebuilds fresh. Without it, dirty worktrees block the upgrade so
   debug edits aren't silently dropped.
 
+- `--base <ref>` builds the update worktree on top of `<ref>` instead of the
+  default `origin/<default-branch>`. Use it to base the upgrade on local work
+  that isn't pushed yet -- e.g. `--base main` (or `--base HEAD`) carries your
+  unpushed commits into the worktree, so the upgrade lands on top of them
+  rather than on the stale origin tip. The push target on `--push` stays your
+  local default branch either way.
+
 ## Override mechanisms
 
 repo-shared retains ownership of every file it delivers. Consumer customization

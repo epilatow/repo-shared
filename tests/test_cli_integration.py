@@ -732,6 +732,51 @@ def test_upgrade_creates_worktree_and_bumps_lock(
     assert consumer_locked_sha != bump_sha
 
 
+def test_upgrade_base_builds_worktree_on_local_ref(
+    tmp_path: Path,
+    _pretend_consumer: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--base`` bases the update worktree on a local ref.
+
+    The default base is ``origin/<default-branch>``, which omits local
+    commits that aren't pushed yet. ``--base main`` builds on the
+    consumer's local ``main`` instead, carrying unpushed work into the
+    upgrade.
+    """
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_with_origin(consumer, f"git+file://{fake_source}")
+    bump_sha = _add_bump_commit(fake_source)
+
+    # A commit on local main that origin/main does not have.
+    (consumer / "LOCAL_ONLY_MARKER").write_text("unpushed local work\n")
+    _git_in(consumer, "add", "LOCAL_ONLY_MARKER")
+    _git_in(consumer, "commit", "-m", "local: unpushed work")
+    capsys.readouterr()
+
+    exit_code = _run_cli(
+        [
+            "upgrade",
+            bump_sha,
+            str(consumer),
+            "--source",
+            f"git+file://{fake_source}",
+            "--base",
+            "main",
+        ]
+    )
+    assert exit_code == ExitCode.SUCCESS
+    short = bump_sha[:7]
+    wt_path = consumer / ".wt" / f"repo-shared-update-{short}"
+    assert wt_path.is_dir()
+    assert cli._read_locked_sha(wt_path) == bump_sha
+    # The worktree carries the unpushed local commit -- proof it was
+    # based on local main, not origin/main (which lacks the marker).
+    assert (wt_path / "LOCAL_ONLY_MARKER").is_file()
+
+
 @_NPX_REQUIRED
 def test_upgrade_with_run_tests_succeeds_against_bumped_pin(
     tmp_path: Path,
