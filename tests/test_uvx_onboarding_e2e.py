@@ -76,8 +76,11 @@ def test_uvx_from_git_invokes_repo_shared_init(
         "uvx invocation exit-0 but the consumer wasn't onboarded "
         "(no _repo_shared/ directory):\n" + result.stdout
     )
-    assert (consumer / "CLAUDE.md").exists(), (
-        "consumer is missing the canonical-path CLAUDE.md symlink"
+    assert (consumer / "CLAUDE.md").is_file(), (
+        "consumer is missing the canonical-path CLAUDE.md copy"
+    )
+    assert (consumer / "AGENTS.md").is_symlink(), (
+        "consumer is missing the canonical-path AGENTS.md symlink"
     )
     assert (consumer / ".gitignore").is_file(), (
         "consumer is missing the seeded .gitignore"

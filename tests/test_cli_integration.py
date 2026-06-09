@@ -96,6 +96,7 @@ def test_init_creates_pyproject_and_vendor_layout(
 
     # ``files`` + ``dotfiles`` kinds install canonical-path symlinks.
     for canonical in (
+        "AGENTS.md",
         "DEVELOPMENT_SHARED.md",
         "DEVELOPMENT_SHARED_AGENT.md",
         ".markdownlint.json",
@@ -115,6 +116,17 @@ def test_init_creates_pyproject_and_vendor_layout(
         assert copy.is_file() and not copy.is_symlink(), (
             f"{canonical} should be a real copied file, not a symlink"
         )
+
+    agents = (consumer / "AGENTS.md").read_text()
+    guidance_files = (
+        "README.md",
+        "DEVELOPMENT.md",
+        "DEVELOPMENT_SHARED.md",
+        "DEVELOPMENT_AGENT.md",
+        "DEVELOPMENT_SHARED_AGENT.md",
+    )
+    positions = [agents.index(f"`{path}`") for path in guidance_files]
+    assert positions == sorted(positions)
 
     # ``tests`` kind does NOT install canonical-path symlinks. The
     # shared tests live solely at their vendored path; pytest finds

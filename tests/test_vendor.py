@@ -30,6 +30,7 @@ def _make_synthetic_shared(root: Path) -> None:
     dotfiles_dir.mkdir(parents=True)
     templates_dir.mkdir(parents=True)
     dottemplates_dir.mkdir(parents=True)
+    (files_dir / "AGENTS.md").write_text("agents\n")
     (files_dir / "CLAUDE.md").write_text("claude\n")
     (files_dir / "DEVELOPMENT_SHARED.md").write_text("dev shared\n")
     nested = files_dir / "_repo_shared"
@@ -48,6 +49,7 @@ def test_iter_shared_yields_files_with_kinds(tmp_path: Path) -> None:
     assert yielded == [
         ("dotfiles", "markdownlint.json"),
         ("dottemplates", "gitignore"),
+        ("files", "AGENTS.md"),
         ("files", "CLAUDE.md"),
         ("files", "DEVELOPMENT_SHARED.md"),
         ("files", "_repo_shared/repo-shared"),
@@ -125,6 +127,8 @@ def test_vendor_writes_files_and_links(tmp_path: Path) -> None:
     assert (
         consumer / "_repo_shared" / "files" / "CLAUDE.md"
     ).read_text() == "claude\n"
+    assert (consumer / "AGENTS.md").is_symlink()
+    assert (consumer / "AGENTS.md").read_text() == "agents\n"
     assert (consumer / "CLAUDE.md").is_symlink()
     assert (consumer / "CLAUDE.md").read_text() == "claude\n"
     assert (consumer / ".markdownlint.json").read_text() == "{}\n"

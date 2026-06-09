@@ -27,7 +27,9 @@ see [Override mechanisms](#override-mechanisms) below.
 
 What lands in your repo:
 
-- `CLAUDE.md` -- top-level Claude / agent instructions.
+- `CLAUDE.md` -- Claude Code entrypoint that loads the development guidance.
+- `AGENTS.md` -- Codex entrypoint that requires the same development guidance
+  to be read before work begins.
 - `DEVELOPMENT_SHARED.md` -- cross-repo conventions for humans + agents (file
   shebangs, ASCII-only rule, comment style, Python conventions, markdown style,
   doc-sync rule, commit-message hygiene).
@@ -331,12 +333,14 @@ A handful of tool settings live in your own config rather than under
 
 ### `.repo-shared-ignore` -- carry your own version of a canonical path
 
-When you want a hand-edited `CLAUDE.md`, your own `DEVELOPMENT.md`, or a custom
-`.markdownlint.json`, list the path in `.repo-shared-ignore` at the repo root:
+When you want a hand-edited agent entrypoint, your own `DEVELOPMENT.md`, or a
+custom `.markdownlint.json`, list the path in `.repo-shared-ignore` at the repo
+root:
 
 ```text
 # .repo-shared-ignore
 CLAUDE.md
+AGENTS.md
 .markdownlint.json
 ```
 
