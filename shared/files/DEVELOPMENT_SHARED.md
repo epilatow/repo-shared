@@ -70,6 +70,13 @@ or side effects, or flag invariants the type system can't enforce.
   the parameter, or suppress the single line with `# noqa: ARG001`.
 - Strongly typed. Avoid storing structured data in a `Dict` with `Any` values
   -- use a `TypedDict`, dataclass, or pydantic model instead.
+- Import the module under test; don't load it with `importlib`. `mypy` types a
+  module built via `SourceFileLoader` / `module_from_spec` as a bare
+  `ModuleType`, so every attribute access on it resolves to `Any` and the
+  test's uses go unchecked. Prefer a plain `import`; if the target isn't
+  normally importable (e.g. an extension-less entry-point script), make it
+  importable -- e.g. a `.py` alias symlink on the `mypy` / `sys.path` search
+  path -- rather than loading it dynamically.
 - All tools have well-defined return / exit values. A tool that surfaces
   success vs. failure to a wrapper script must do so via the exit code, not
   just stdout / stderr.
