@@ -132,10 +132,12 @@ def code_quality_overrides(
 
 @dataclass(frozen=True)
 class MarkdownOverrides:
-    """Effective values for ``MdformatCheckBase`` subclass attrs.
+    """Effective values for the two delivered markdown-gate tests.
 
-    ``extra_exclude_dirs`` is appended to the base class' default
-    set, so a consumer adds without replacing.
+    ``wrap`` feeds ``MdformatCheckBase``; ``extra_exclude_dirs`` feeds
+    the ``exclude_dirs`` attr of both ``MdformatCheckBase`` and
+    ``MarkdownlintCheckBase``, appended to each base class' default
+    set so a consumer adds without replacing.
     """
 
     wrap: int = 79
@@ -151,9 +153,9 @@ def markdown_overrides(
 
     - ``wrap`` (int, default 79) -- ``mdformat --wrap`` value.
     - ``extra-exclude-dirs`` (list of str, default ``[]``) --
-      appended to the base class' default exclude-dirs set, so the
-      consumer's additions stack on top of the shared baseline rather
-      than replacing it.
+      appended to the default exclude-dirs set of both markdown gates
+      (mdformat and markdownlint), so the consumer's additions stack
+      on top of the shared baseline rather than replacing it.
     """
     s = _load_section("markdown", repo_root=repo_root)
     wrap_raw = s.get("wrap", 79)

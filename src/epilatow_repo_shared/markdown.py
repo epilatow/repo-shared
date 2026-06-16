@@ -1,16 +1,31 @@
 # This is AI generated code
 """Pytest bases for mdformat and markdownlint checks.
 
-Both bases walk a configured repo root for ``*.md`` files (excluding a
-configurable set of directory prefixes) and shell out to the relevant
-tool. ``MdformatCheckBase`` runs ``python -m mdformat --wrap=N --number
---check`` against the discovered files; ``MarkdownlintCheckBase`` runs
-``npx markdownlint-cli2`` and **fails** if ``npx`` is missing -- markdownlint
-gates rules ``mdformat`` cannot see (broken anchor links, duplicate
-headings, the custom ``no-squashed-file-references`` rule, ...), so
-silently skipping when Node isn't installed leaves those rules unenforced.
-The consumer's Requirements section in the README lists ``npx`` as
-mandatory.
+Both bases discover their targets the same way: ``_walk_markdown``
+returns the real-file ``*.md`` under ``repo_root`` that ``git
+ls-files`` reports -- tracked or untracked-but-not-ignored, so
+``.gitignore`` is honored -- dropping symlinks and a configurable set
+of directory names, and the base shells the explicit file list to its
+tool. This deliberately avoids glob expansion: a tree walk over a repo
+carrying a large ``.venv`` / ``.cache`` is both slow and wrong (those
+files are not ours to lint), so neither gate ever lets the tool expand
+a ``**`` glob.
+
+``MdformatCheckBase`` runs ``python -m mdformat --wrap=N --number
+--check`` against the discovered files. ``MarkdownlintCheckBase``
+shells out to ``npx markdownlint-cli2 --no-globs`` with the discovered
+files as ``:``-prefixed literal paths -- ``--no-globs`` drops the
+config's ``globs`` so markdownlint-cli2 walks nothing, while the
+config's lint rules and custom rules still apply. It **fails** if
+``npx`` is missing -- markdownlint gates rules ``mdformat`` cannot see
+(broken anchor links, duplicate headings, the custom
+``no-squashed-file-references`` rule, ...), so silently skipping when
+Node isn't installed leaves those rules unenforced. The consumer's
+Requirements section in the README lists ``npx`` as mandatory.
+
+Both bases route the ``exclude_dirs`` knob through
+``_normalize_exclude_dirs`` so consumers see the same accept / reject
+rules across the two markdown gates.
 
 Subclass per consumer test file::
 
@@ -44,8 +59,8 @@ from epilatow_repo_shared.python_quality import (
 )
 
 # ``_repo_shared`` is tracked, but the canonical-path symlinks
-# expose its content at a second path, so the markdown formatter
-# would otherwise check it twice.
+# expose its content at a second path, so the markdown gates would
+# otherwise check it twice.
 _DEFAULT_EXCLUDE_DIRS: tuple[str, ...] = ("_repo_shared",)
 
 
@@ -141,9 +156,26 @@ class MdformatCheckBase:
 
 
 class MarkdownlintCheckBase:
-    """Assert ``markdownlint-cli2`` is clean across the repo."""
+    """Assert ``markdownlint-cli2`` is clean across the repo.
+
+    Targets come from ``_walk_markdown`` -- the ``*.md`` ``git
+    ls-files`` reports under ``repo_root`` (honoring ``.gitignore``),
+    minus ``exclude_dirs`` -- and are passed to ``markdownlint-cli2
+    --no-globs`` as ``:``-prefixed literal paths. ``--no-globs``
+    suppresses the config's ``globs`` so the tool walks nothing (no
+    ``.venv`` / ``.cache`` traversal, no ignored files linted); the
+    config's lint rules and custom rules still apply because
+    ``--no-globs`` only drops ``globs``.
+
+    The subclass wires the consumer's
+    ``[tool.repo-shared.markdown] extra-exclude-dirs`` into
+    ``exclude_dirs``, sharing the ``_normalize_exclude_dirs`` accept /
+    reject rules with ``MdformatCheckBase`` so both markdown gates
+    discover the same files and honor the same knob.
+    """
 
     repo_root: ClassVar[Path] = _discover_repo_root()
+    exclude_dirs: ClassVar[tuple[str, ...]] = _DEFAULT_EXCLUDE_DIRS
 
     def test_markdownlint_clean(self) -> None:
         if shutil.which("npx") is None:
@@ -157,8 +189,20 @@ class MarkdownlintCheckBase:
                 "Node requirement is documented under Requirements in "
                 "repo-shared's README."
             )
+        targets = _walk_markdown(self.repo_root, self.exclude_dirs)
+        if not targets:
+            pytest.skip("no *.md files under repo_root")
+        literal_paths = [
+            f":{p.relative_to(self.repo_root).as_posix()}" for p in targets
+        ]
         result = sp.run(
-            ["npx", "--yes", "markdownlint-cli2"],
+            [
+                "npx",
+                "--yes",
+                "markdownlint-cli2",
+                "--no-globs",
+                *literal_paths,
+            ],
             cwd=self.repo_root,
             capture_output=True,
             text=True,

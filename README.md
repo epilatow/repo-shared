@@ -39,8 +39,8 @@ What lands in your repo:
 - `DEVELOPMENT.md` and `DEVELOPMENT_AGENT.md` -- per-repo placeholder templates
   that pair with the `_SHARED` files above. Replace either symlink with a real
   file when you accumulate repo-specific conventions worth writing down.
-- `.markdownlint.json` and `.markdownlint-cli2.jsonc` -- markdownlint config +
-  glob scoping for the linter test below.
+- `.markdownlint.json` and `.markdownlint-cli2.jsonc` -- markdownlint rule
+  config and custom-rule registration for the linter test below.
 - `.gitignore` -- baseline Python / editor / OS ignores plus the `.wt/`
   worktree dir `upgrade` uses.
 
@@ -94,15 +94,22 @@ into these tests:
   drift in line wrap, table alignment, ordered-list numbering, bullet markers,
   blank-line spacing, ...
 
-- **`test_markdownlint.py`** -- `markdownlint-cli2` across the same set.
+- **`test_markdownlint.py`** -- `markdownlint-cli2` across the repo's markdown.
   Catches the rules `mdformat` can't see: required fence languages, broken
   anchor links, duplicate headings, missing image alt text, plus a custom rule
   (`no-squashed-file-references`) that flags multiple Claude `@<path>` file
   imports squashed onto one line -- the imports still expand when reflowed, but
   the source goes opaque and any loader-specific dialect built on top
-  (line-by-line parsing) breaks outright. Fails -- not skips -- when `npx` is
-  missing, so the gate stays enforced everywhere; install Node per the
-  Requirements section.
+  (line-by-line parsing) breaks outright. Like the other gates it discovers
+  files via `git ls-files` and feeds the explicit list to
+  `markdownlint-cli2 --no-globs`, so it never walks the tree (no `.venv` /
+  `.cache` traversal) and lints only the files git tracks or doesn't ignore
+  (`.gitignore` is honored). The
+  `[tool.repo-shared.markdown] extra-exclude-dirs` knob (the same knob the
+  mdformat gate reads) drops further directories from that list.
+  `.markdownlint.json` still supplies the lint rules and the custom rule. Fails
+  -- not skips -- when `npx` is missing, so the gate stays enforced everywhere;
+  install Node per the Requirements section.
 
 Plus the two integration sanity checks:
 
@@ -275,7 +282,10 @@ mypy-python-version = "3.12"            # default unset; pins uvx --python
 
 [tool.repo-shared.markdown]
 wrap = 78                               # default 79
-extra-exclude-dirs = ["build"]          # appended to the base markdown default
+# Appended to the base exclude set of BOTH markdown gates (mdformat
+# and markdownlint). Each entry is a directory NAME pruned anywhere
+# in the tree, not a path prefix.
+extra-exclude-dirs = ["build"]          # default []
 ```
 
 For files that need their own mypy environment (e.g. an HA-coupled module file
