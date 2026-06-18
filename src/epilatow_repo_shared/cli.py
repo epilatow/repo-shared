@@ -680,13 +680,6 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
             "from a consumer."
         )
         return ExitCode.USAGE
-    if not _git_is_clean(repo_root):
-        _eprint(
-            "working tree has uncommitted changes; upgrade-tools "
-            "must start clean (the worktree spawns from the "
-            "current branch tip)."
-        )
-        return ExitCode.DIRTY
 
     pyproject = repo_root / "pyproject.toml"
     if not pyproject.is_file():
@@ -753,6 +746,13 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
         # to a quiet PyPI leaves no state behind.
         print("every pinned tool is up to date.")
         return ExitCode.SUCCESS
+
+    if not _git_is_clean(repo_root):
+        _eprint(
+            "working tree has uncommitted changes; upgrade-tools "
+            "must start clean. Commit or stash, then re-run."
+        )
+        return ExitCode.DIRTY
 
     bump_hash = _tool_bump_hash(bumps)
     branch = f"repo-shared/tool-bump-{bump_hash}"
@@ -959,12 +959,6 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
     if not _git_repo(consumer_root):
         _eprint(f"not a git repo: {consumer_root}")
         return ExitCode.ERROR
-    if not _git_is_clean(consumer_root):
-        _eprint(
-            "working tree has uncommitted changes; refusing to "
-            "upgrade. Commit or stash, then re-run."
-        )
-        return ExitCode.DIRTY
 
     source = args.source or _DEFAULT_SOURCE
     target_sha = args.sha or _resolve_upstream_head(source)
@@ -987,6 +981,13 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
     if current_sha == target_sha:
         print(f"already at {short}; nothing to do.")
         return ExitCode.SUCCESS
+
+    if not _git_is_clean(consumer_root):
+        _eprint(
+            "working tree has uncommitted changes; refusing to "
+            "upgrade. Commit or stash, then re-run."
+        )
+        return ExitCode.DIRTY
 
     if (
         sp.run(

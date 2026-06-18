@@ -183,14 +183,47 @@ def test_upgrade_tools_refuses_from_consumer(
     assert "maintainer-only" in capsys.readouterr().err
 
 
-def test_upgrade_tools_refuses_dirty_clone(
-    fake_clone: Path,
+def test_upgrade_tools_refuses_dirty_clone_when_a_bump_is_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    (fake_clone / "DIRTY_MARKER").write_text("local edit\n")
-    exit_code = _run_cli(["upgrade-tools"])
+    # The dirty refusal only fires once a bump is actually available
+    # (a quiet PyPI is a no-op that must not be blocked by an unrelated
+    # dirty tree), so stub a real ruff bump before dirtying the clone.
+    pinned = dict(
+        cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
+    )
+    current_ruff = pinned["ruff"]
+    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
+    _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
+    (clone / "DIRTY_MARKER").write_text("local edit\n")
+    capsys.readouterr()
+
+    exit_code = _run_cli(["upgrade-tools", "--only", "ruff"])
     assert exit_code == ExitCode.DIRTY
     assert "uncommitted changes" in capsys.readouterr().err
+    # The refusal happens before any worktree is spun up.
+    assert not (clone / ".wt").exists()
+
+
+def test_upgrade_tools_no_op_ignores_dirty_clone(
+    fake_clone: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A quiet PyPI is a no-op; the dirty tree must not turn it into a
+    # spurious failure.
+    pinned = dict(
+        cli._read_pinned_deps((fake_clone / "pyproject.toml").read_text())
+    )
+    _stub_pypi(monkeypatch, pinned)
+    (fake_clone / "DIRTY_MARKER").write_text("local edit\n")
+
+    exit_code = _run_cli(["upgrade-tools"])
+    assert exit_code == ExitCode.SUCCESS
+    assert "every pinned tool is up to date." in capsys.readouterr().out
 
 
 def test_upgrade_tools_no_op_when_pypi_matches_current_pins(

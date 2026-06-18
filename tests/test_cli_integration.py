@@ -710,6 +710,36 @@ def test_upgrade_is_no_op_when_target_matches_current_pin(
     assert not wt_parent.exists()
 
 
+def test_upgrade_no_op_ignores_dirty_working_tree(
+    tmp_path: Path,
+    _pretend_consumer: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A consumer already at the target pin must report "nothing to do"
+    # regardless of unrelated uncommitted work -- the dirty refusal is
+    # for upgrades that would actually touch the tree, not no-ops.
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    current_sha = _head_sha(fake_source)
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_with_origin(consumer, f"git+file://{fake_source}")
+    (consumer / "DIRTY_MARKER").write_text("local edit\n")
+    capsys.readouterr()
+
+    exit_code = _run_cli(
+        [
+            "upgrade",
+            current_sha,
+            str(consumer),
+            "--source",
+            f"git+file://{fake_source}",
+        ]
+    )
+    assert exit_code == ExitCode.SUCCESS
+    assert "nothing to do" in capsys.readouterr().out
+    assert not (consumer / ".wt").exists()
+
+
 def test_upgrade_creates_worktree_and_bumps_lock(
     tmp_path: Path,
     _pretend_consumer: None,
