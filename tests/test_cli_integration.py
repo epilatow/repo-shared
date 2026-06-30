@@ -7,12 +7,10 @@ they exercise ``_cmd_init`` + ``_cmd_status`` + the surrounding
 helpers (``_ensure_repo_shared_dep``, ``vendor``, ``_read_locked_sha``)
 the way a real consumer would.
 
-The shared ``args_parser`` and the ``_refuse_when_repo_shared`` guard
-inside each command both detect "running from a repo-shared clone"
-via ``_running_from_local_repo_shared`` -- which, in pytest, is true
-(the tests themselves live inside the clone). The ``_pretend_consumer``
-fixture patches that probe to ``None`` so the consumer-side commands
-become visible and don't refuse.
+``init`` / ``upgrade`` / ``status`` refuse based on the *target*
+repo's state (``_classify_repo``), not on where the CLI source
+lives, so these tests drive them against tmp targets by explicit
+path and need no patching of the running-from-a-clone probe.
 """
 
 from __future__ import annotations
@@ -39,12 +37,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_SOURCE_URL = f"git+file://{REPO_ROOT}"
 
 
-@pytest.fixture
-def _pretend_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the CLI behave as if invoked from a consumer, not the clone."""
-    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: None)
-
-
 def _run_cli(argv: list[str]) -> ExitCode:
     parser = cli.args_parser()
     args = parser.parse_args(argv)
@@ -65,6 +57,7 @@ def _init_consumer(tmp_path: Path) -> Path:
             "init",
             "--source",
             LOCAL_SOURCE_URL,
+            "--repo",
             str(tmp_path),
         ]
     )
@@ -74,7 +67,6 @@ def _init_consumer(tmp_path: Path) -> Path:
 
 def test_init_creates_pyproject_and_vendor_layout(
     tmp_path: Path,
-    _pretend_consumer: None,
 ) -> None:
     consumer = _init_consumer(tmp_path)
 
@@ -151,88 +143,45 @@ def test_init_creates_pyproject_and_vendor_layout(
 
 def test_init_refuses_when_not_a_git_repo(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+    )
     assert exit_code == ExitCode.ERROR
     assert "not a git repo" in capsys.readouterr().err
     assert not (tmp_path / "pyproject.toml").exists()
 
 
-def test_init_is_idempotent(
+def test_init_refuses_on_already_onboarded_repo(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """A second ``init`` on an onboarded repo is a usage error.
+
+    Once a repo carries a vendored ``_repo_shared/``, ``init`` has
+    nothing to do -- ``upgrade`` bumps the pin and ``status``
+    inspects drift. The refusal steers the user there rather than
+    silently re-running onboarding.
+    """
     consumer = _init_consumer(tmp_path)
-    pyproject_before = (consumer / "pyproject.toml").read_text()
-    lock_before = (consumer / "uv.lock").read_text()
     capsys.readouterr()
 
-    # The re-run touches nothing on disk; the templates seeded by the
-    # first init still byte-match their upstreams, so init stays SUCCESS
-    # (a drifted template would ERROR -- see test_init_preexisting_*).
-    exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(consumer)])
-    assert exit_code == ExitCode.SUCCESS
-    out = capsys.readouterr().out
-    assert "symlinks created: 0" in out
-    assert (consumer / "pyproject.toml").read_text() == pyproject_before
-    assert (consumer / "uv.lock").read_text() == lock_before
-
-
-def test_init_re_run_advances_pin_to_current_head(
-    tmp_path: Path,
-    _pretend_consumer: None,
-) -> None:
-    """Re-running ``init`` after upstream HEAD moves bumps the pin.
-
-    ``uv add`` against an unchanged source URL is a no-op for
-    resolution -- it sees the dep already satisfied by ``uv.lock``
-    and skips the git-fetch. ``_ensure_repo_shared_dep`` resolves
-    HEAD itself and passes an explicit ``@<sha>`` to ``uv add`` so
-    a re-run of ``init`` advances the pin to the current upstream
-    HEAD, matching what an ``upgrade`` would do. Regression guard
-    against a user re-running ``init`` to update and ending up
-    stuck at the original onboarding SHA.
-    """
-    fake_source = _clone_fake_source(tmp_path / "fake-source")
-    initial_sha = _head_sha(fake_source)
-    consumer = tmp_path / "consumer"
-    consumer.mkdir()
-    _git_init(consumer)
-    assert (
-        _run_cli(
-            ["init", "--source", f"git+file://{fake_source}", str(consumer)]
-        )
-        == ExitCode.SUCCESS
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(consumer)]
     )
-    assert cli._read_locked_sha(consumer) == initial_sha
-
-    new_sha = _add_bump_commit(fake_source)
-    assert new_sha != initial_sha
-
-    # The re-run advances the pin; the first init's seeded templates
-    # still byte-match their upstreams (the bump commit didn't touch
-    # them), so it stays SUCCESS.
-    assert (
-        _run_cli(
-            ["init", "--source", f"git+file://{fake_source}", str(consumer)]
-        )
-        == ExitCode.SUCCESS
-    )
-    assert cli._read_locked_sha(consumer) == new_sha
+    assert exit_code == ExitCode.USAGE
+    assert "already onboarded" in capsys.readouterr().err
 
 
 def test_status_after_init_reports_pinned_sha_in_sync(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     consumer = _init_consumer(tmp_path)
     capsys.readouterr()
 
-    exit_code = _run_cli(["status", str(consumer)])
+    exit_code = _run_cli(["status", "--repo", str(consumer)])
     assert exit_code == ExitCode.SUCCESS
     out = capsys.readouterr().out
     assert "pinned:" in out
@@ -246,29 +195,26 @@ def test_status_after_init_reports_pinned_sha_in_sync(
 
 def test_status_without_lockfile_reports_no_pin(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _git_init(tmp_path)
 
-    exit_code = _run_cli(["status", str(tmp_path)])
+    exit_code = _run_cli(["status", "--repo", str(tmp_path)])
     assert exit_code == ExitCode.SUCCESS
     assert "no epilatow-repo-shared pin" in capsys.readouterr().out
 
 
 def test_status_refuses_outside_git_repo(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = _run_cli(["status", str(tmp_path)])
+    exit_code = _run_cli(["status", "--repo", str(tmp_path)])
     assert exit_code == ExitCode.ERROR
     assert "not a git repo" in capsys.readouterr().err
 
 
 def test_status_ignores_user_placed_extra_symlink_into_vendor(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Extra symlinks pointing into the vendor dir don't trip status.
@@ -290,7 +236,7 @@ def test_status_ignores_user_placed_extra_symlink_into_vendor(
     )
     capsys.readouterr()
 
-    exit_code = _run_cli(["status", str(consumer)])
+    exit_code = _run_cli(["status", "--repo", str(consumer)])
     assert exit_code == ExitCode.SUCCESS
     out = capsys.readouterr().out
     assert "vendor in sync" in out
@@ -300,7 +246,6 @@ def test_status_ignores_user_placed_extra_symlink_into_vendor(
 
 def test_status_flags_truly_broken_vendor_symlink(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A symlink whose vendor target was deleted shows up as broken.
@@ -317,7 +262,7 @@ def test_status_flags_truly_broken_vendor_symlink(
     )
     capsys.readouterr()
 
-    exit_code = _run_cli(["status", str(consumer)])
+    exit_code = _run_cli(["status", "--repo", str(consumer)])
     assert exit_code == ExitCode.ERROR
     err = capsys.readouterr().err
     assert "broken symlink: subdir/ghost.md" in err
@@ -325,7 +270,6 @@ def test_status_flags_truly_broken_vendor_symlink(
 
 def test_init_preexisting_file_errors_on_shadowed_symlink(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Pre-existing file at a symlink-kind path -> ERROR.
@@ -339,7 +283,9 @@ def test_init_preexisting_file_errors_on_shadowed_symlink(
     consumer_dev = tmp_path / "DEVELOPMENT_SHARED.md"
     consumer_dev.write_text("consumer's own DEVELOPMENT_SHARED.md\n")
 
-    exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+    )
     assert exit_code == ExitCode.ERROR
     out = capsys.readouterr().out
     assert "canonical paths out of sync with the upstream" in out
@@ -356,9 +302,42 @@ def test_init_preexisting_file_errors_on_shadowed_symlink(
     ).is_file()
 
 
+def test_init_re_run_recovers_after_clearing_sync_violation(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The ERROR path's "delete the shadow then re-run init" recovery works.
+
+    A shadowing local file makes the first ``init`` abort with ERROR,
+    but ``_repo_shared/`` is already on disk, so the target is now
+    onboarded-but-out-of-sync. Re-running ``init`` after clearing the
+    shadow must finish onboarding (install the canonical symlink),
+    not refuse as "already onboarded".
+    """
+    _git_init(tmp_path)
+    shadow = tmp_path / "DEVELOPMENT_SHARED.md"
+    shadow.write_text("consumer's own DEVELOPMENT_SHARED.md\n")
+    assert (
+        _run_cli(
+            ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+        )
+        == ExitCode.ERROR
+    )
+    assert (tmp_path / "_repo_shared").is_dir()
+    capsys.readouterr()
+
+    shadow.unlink()
+    assert (
+        _run_cli(
+            ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+        )
+        == ExitCode.SUCCESS
+    )
+    assert shadow.is_symlink()
+
+
 def test_init_preexisting_template_errors_on_drift(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A customized pre-existing template copy -> ERROR.
@@ -371,7 +350,9 @@ def test_init_preexisting_template_errors_on_drift(
     consumer_claude = tmp_path / "CLAUDE.md"
     consumer_claude.write_text("consumer's own CLAUDE.md\n")
 
-    exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+    )
     assert exit_code == ExitCode.ERROR
     out = capsys.readouterr().out
     assert "canonical paths out of sync with the upstream" in out
@@ -385,7 +366,6 @@ def test_init_preexisting_template_errors_on_drift(
 
 def test_init_preexisting_template_matching_upstream_no_warning(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """First init where a pre-existing template already matches the upstream.
@@ -398,7 +378,9 @@ def test_init_preexisting_template_matching_upstream_no_warning(
     upstream = (REPO_ROOT / "shared" / "templates" / "CLAUDE.md").read_text()
     (tmp_path / "CLAUDE.md").write_text(upstream)
 
-    exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+    )
     assert exit_code == ExitCode.SUCCESS
     out = capsys.readouterr().out
     assert "out of sync" not in out
@@ -408,7 +390,6 @@ def test_init_preexisting_template_matching_upstream_no_warning(
 
 def test_init_ignored_path_succeeds(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Path in ``.repo-shared-ignore`` -> SUCCESS.
@@ -422,7 +403,9 @@ def test_init_ignored_path_succeeds(
     _git_init(tmp_path)
     (tmp_path / ".repo-shared-ignore").write_text("CLAUDE.md\n")
 
-    exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+    )
     assert exit_code == ExitCode.SUCCESS
     out = capsys.readouterr().out
     assert "opted out via .repo-shared-ignore" in out
@@ -432,24 +415,41 @@ def test_init_ignored_path_succeeds(
     assert (tmp_path / "_repo_shared" / "templates" / "CLAUDE.md").is_file()
 
 
-def test_init_refuses_when_invoked_from_repo_shared_clone(
+def test_init_from_clone_onboards_plain_target_by_path(
     tmp_path: Path,
+) -> None:
+    """``init --repo <plain-repo>`` works from a repo-shared clone.
+
+    These tests run from the clone (pytest lives inside it), so this
+    is the ``bin/repo-shared init --repo $REPO`` path: the target, not
+    the CLI source location, decides whether ``init`` proceeds.
+    """
+    _git_init(tmp_path)
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+    )
+    assert exit_code == ExitCode.SUCCESS
+    assert (tmp_path / "_repo_shared").is_dir()
+
+
+def test_init_refuses_when_target_is_repo_shared_source(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Deliberately do NOT request ``_pretend_consumer`` -- the
-    # unpatched ``_running_from_local_repo_shared`` will find this
-    # repo's own clone (the one pytest is running from) and trigger
-    # the refusal.
-    _git_init(tmp_path)
-    exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
+    """``init`` pointed at repo-shared's own source is a usage error.
+
+    The refusal keys on the target's state, so this fires whether the
+    source tree is reached by explicit path or as the default cwd of
+    an ``init`` run with no path argument from inside the clone.
+    """
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(REPO_ROOT)]
+    )
     assert exit_code == ExitCode.USAGE
-    err = capsys.readouterr().err
-    assert "consumer-side subcommand" in err
+    assert "repo-shared's own source" in capsys.readouterr().err
 
 
 def test_init_adds_dep_to_pre_existing_pyproject_without_clobbering(
     tmp_path: Path,
-    _pretend_consumer: None,
 ) -> None:
     _git_init(tmp_path)
     # Pre-existing project with its own description + an unrelated dep
@@ -464,7 +464,9 @@ def test_init_adds_dep_to_pre_existing_pyproject_without_clobbering(
     )
     (tmp_path / "pyproject.toml").write_text(existing)
 
-    exit_code = _run_cli(["init", "--source", LOCAL_SOURCE_URL, str(tmp_path)])
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+    )
     assert exit_code == ExitCode.SUCCESS
 
     text = (tmp_path / "pyproject.toml").read_text()
@@ -486,13 +488,14 @@ def test_init_adds_dep_to_pre_existing_pyproject_without_clobbering(
 
 def test_init_reports_error_when_source_url_is_invalid(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _git_init(tmp_path)
     bogus_source = f"git+file://{tmp_path / 'definitely-not-a-repo'}"
 
-    exit_code = _run_cli(["init", "--source", bogus_source, str(tmp_path)])
+    exit_code = _run_cli(
+        ["init", "--source", bogus_source, "--repo", str(tmp_path)]
+    )
     assert exit_code == ExitCode.ERROR
     err = capsys.readouterr().err
     assert "uv could not add epilatow-repo-shared" in err
@@ -597,7 +600,9 @@ def _setup_consumer_with_origin(
     ``(origin_bare_path, default_branch)``.
     """
     _git_init(consumer)
-    exit_code = _run_cli(["init", "--source", source_url, str(consumer)])
+    exit_code = _run_cli(
+        ["init", "--source", source_url, "--repo", str(consumer)]
+    )
     assert exit_code == ExitCode.SUCCESS
     if pyproject_extras is not None:
         pyproject = consumer / "pyproject.toml"
@@ -642,13 +647,13 @@ _PLACEHOLDER_SHA = "0" * 40
 
 def test_upgrade_refuses_outside_git_repo(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     exit_code = _run_cli(
         [
             "upgrade",
             _PLACEHOLDER_SHA,
+            "--repo",
             str(tmp_path),
             "--source",
             LOCAL_SOURCE_URL,
@@ -660,7 +665,6 @@ def test_upgrade_refuses_outside_git_repo(
 
 def test_upgrade_refuses_dirty_working_tree(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -674,6 +678,7 @@ def test_upgrade_refuses_dirty_working_tree(
         [
             "upgrade",
             _PLACEHOLDER_SHA,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -685,7 +690,6 @@ def test_upgrade_refuses_dirty_working_tree(
 
 def test_upgrade_is_no_op_when_target_matches_current_pin(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -699,6 +703,7 @@ def test_upgrade_is_no_op_when_target_matches_current_pin(
         [
             "upgrade",
             current_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -712,7 +717,6 @@ def test_upgrade_is_no_op_when_target_matches_current_pin(
 
 def test_upgrade_no_op_ignores_dirty_working_tree(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # A consumer already at the target pin must report "nothing to do"
@@ -730,6 +734,7 @@ def test_upgrade_no_op_ignores_dirty_working_tree(
         [
             "upgrade",
             current_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -742,7 +747,6 @@ def test_upgrade_no_op_ignores_dirty_working_tree(
 
 def test_upgrade_creates_worktree_and_bumps_lock(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -756,6 +760,7 @@ def test_upgrade_creates_worktree_and_bumps_lock(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -776,7 +781,6 @@ def test_upgrade_creates_worktree_and_bumps_lock(
 
 def test_upgrade_base_builds_worktree_on_local_ref(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """``--base`` bases the update worktree on a local ref.
@@ -802,6 +806,7 @@ def test_upgrade_base_builds_worktree_on_local_ref(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -822,7 +827,6 @@ def test_upgrade_base_builds_worktree_on_local_ref(
 @_NPX_REQUIRED
 def test_upgrade_with_run_tests_succeeds_against_bumped_pin(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -836,6 +840,7 @@ def test_upgrade_with_run_tests_succeeds_against_bumped_pin(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -850,7 +855,6 @@ def test_upgrade_with_run_tests_succeeds_against_bumped_pin(
 @_NPX_REQUIRED
 def test_upgrade_with_push_ff_merges_and_cleans_up(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -869,6 +873,7 @@ def test_upgrade_with_push_ff_merges_and_cleans_up(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -889,7 +894,6 @@ def test_upgrade_with_push_ff_merges_and_cleans_up(
 
 def test_upgrade_with_push_rejects_when_origin_is_non_fast_forward(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -906,6 +910,7 @@ def test_upgrade_with_push_rejects_when_origin_is_non_fast_forward(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -922,7 +927,6 @@ def test_upgrade_with_push_rejects_when_origin_is_non_fast_forward(
 
 def test_upgrade_run_tests_failure_leaves_worktree_with_bump_commit(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -940,6 +944,7 @@ def test_upgrade_run_tests_failure_leaves_worktree_with_bump_commit(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -963,7 +968,6 @@ def test_upgrade_run_tests_failure_leaves_worktree_with_bump_commit(
 
 def test_upgrade_resumes_existing_worktree_on_re_run(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -977,6 +981,7 @@ def test_upgrade_resumes_existing_worktree_on_re_run(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -996,6 +1001,7 @@ def test_upgrade_resumes_existing_worktree_on_re_run(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -1012,7 +1018,6 @@ def test_upgrade_resumes_existing_worktree_on_re_run(
 
 def test_upgrade_dirty_worktree_blocks_re_run_without_force_retry(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -1024,6 +1029,7 @@ def test_upgrade_dirty_worktree_blocks_re_run_without_force_retry(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -1039,6 +1045,7 @@ def test_upgrade_dirty_worktree_blocks_re_run_without_force_retry(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -1055,7 +1062,6 @@ def test_upgrade_dirty_worktree_blocks_re_run_without_force_retry(
 
 def test_upgrade_force_retry_recreates_dirty_worktree(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fake_source = _clone_fake_source(tmp_path / "fake-source")
@@ -1067,6 +1073,7 @@ def test_upgrade_force_retry_recreates_dirty_worktree(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -1082,6 +1089,7 @@ def test_upgrade_force_retry_recreates_dirty_worktree(
         [
             "upgrade",
             bump_sha,
+            "--repo",
             str(consumer),
             "--source",
             f"git+file://{fake_source}",
@@ -1106,7 +1114,6 @@ def _delete_canonical_link(consumer: Path, rel: str) -> Path:
 
 def test_revendor_clean_consumer_returns_success(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     consumer = _init_consumer(tmp_path)
@@ -1118,7 +1125,6 @@ def test_revendor_clean_consumer_returns_success(
 
 def test_revendor_errors_when_canonical_path_is_out_of_sync(
     tmp_path: Path,
-    _pretend_consumer: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """``_revendor`` aborts on any out-of-sync canonical path.

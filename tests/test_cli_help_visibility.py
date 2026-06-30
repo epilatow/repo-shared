@@ -1,63 +1,61 @@
 # This is AI generated code
 """Subcommand visibility in ``--help`` is context-aware.
 
-``args_parser`` shows different subcommand listings depending on
-whether the CLI is running from a repo-shared maintainer clone or
-from an installed consumer. The mechanism is a custom
-``metavar="{...}"`` on ``add_subparsers`` plus a per-subcommand
-``help=`` omission for hidden commands.
+``args_parser`` lists different subcommands depending on the state of
+the repo the CLI is invoked in (the cwd, classified by
+``_classify_repo`` into ``SOURCE`` / ``ONBOARDED`` / ``PLAIN``). The
+mechanism is a custom ``metavar="{...}"`` on ``add_subparsers`` plus a
+per-subcommand ``help=`` omission for hidden commands.
 
-These gates the visibility plumbing -- the runtime refusal guards
-inside the hidden subcommands are tested separately
-(``test_cli_upgrade_tools.py::test_upgrade_tools_refuses_from_consumer``).
+These gate the visibility plumbing -- the runtime refusal guards
+inside each command are tested separately (the ``_refuse_*`` paths in
+``test_cli_integration.py`` and ``test_cli_upgrade_tools.py``).
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
 from epilatow_repo_shared import cli
 
 
-def test_upgrade_tools_hidden_from_consumer_help_listing(
+def _help_for_state(
+    monkeypatch: pytest.MonkeyPatch, state: cli.RepoState
+) -> str:
+    monkeypatch.setattr(cli, "_classify_repo", lambda _path: state)
+    return cli.args_parser().format_help()
+
+
+def test_source_clone_lists_init_upgrade_status_and_upgrade_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: None)
-    help_text = cli.args_parser().format_help()
-    assert "upgrade-tools" not in help_text
+    help_text = _help_for_state(monkeypatch, cli.RepoState.SOURCE)
     assert "init" in help_text
     assert "upgrade" in help_text
     assert "status" in help_text
-    assert "run-tests" in help_text
-
-
-def test_upgrade_tools_visible_in_repo_shared_help_listing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        cli, "_running_from_local_repo_shared", lambda: tmp_path
-    )
-    help_text = cli.args_parser().format_help()
     assert "upgrade-tools" in help_text
+    # ``run-tests`` runs through the consumer's pinned version, so it
+    # is not offered from the clone.
+    assert "run-tests" not in help_text
 
 
-def test_run_tests_hidden_from_maintainer_help_listing(
-    tmp_path: Path,
+def test_onboarded_consumer_hides_init_and_upgrade_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``run-tests`` is consumer-only and shouldn't show in maintainer help.
+    help_text = _help_for_state(monkeypatch, cli.RepoState.ONBOARDED)
+    assert "upgrade" in help_text
+    assert "status" in help_text
+    assert "run-tests" in help_text
+    # Already onboarded: ``init`` is meaningless here, and
+    # ``upgrade-tools`` is maintainer-only.
+    assert "init" not in help_text
+    assert "upgrade-tools" not in help_text
 
-    A maintainer running pytest against ``shared/tests`` directly
-    (or the repo's own testpaths via ``uv run pytest``) covers the
-    maintainer's "dogfood the delivered tests" need; ``run-tests``
-    is purely the consumer-side wrapper that points pytest at the
-    vendored ``_repo_shared/tests`` location.
-    """
-    monkeypatch.setattr(
-        cli, "_running_from_local_repo_shared", lambda: tmp_path
-    )
-    help_text = cli.args_parser().format_help()
-    assert "run-tests" not in help_text
+
+def test_plain_repo_lists_only_init(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    help_text = _help_for_state(monkeypatch, cli.RepoState.PLAIN)
+    assert "init" in help_text
+    for hidden in ("upgrade", "status", "run-tests", "upgrade-tools"):
+        assert hidden not in help_text, f"{hidden} should be hidden"

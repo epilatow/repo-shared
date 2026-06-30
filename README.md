@@ -157,9 +157,11 @@ uvx --from "git+https://github.com/epilatow/repo-shared" \
     repo-shared init
 ```
 
-Or from a local clone of repo-shared (e.g. for offline work):
+Or from a local clone of repo-shared (e.g. for offline work), run its wrapper
+from inside the repo you want to onboard:
 
 ```bash
+cd ~/some-other-repo
 ~/src/github.com/epilatow/repo-shared/bin/repo-shared init
 ```
 

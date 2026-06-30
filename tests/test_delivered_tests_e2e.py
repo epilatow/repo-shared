@@ -77,6 +77,7 @@ def _consumer(
             "init",
             "--source",
             f"git+file://{_shared_fake_source}",
+            "--repo",
             str(consumer),
         ]
     )

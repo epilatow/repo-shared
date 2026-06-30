@@ -23,6 +23,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,8 @@ from epilatow_repo_shared import sp
 from epilatow_repo_shared.exit_codes import ExitCode
 from epilatow_repo_shared.vendor import (
     VENDOR_DIRNAME,
+    _is_repo_shared_source_root,
+    check_in_sync,
     cleanup_stale_vendored,
     consumer_paths,
     iter_shared,
@@ -160,12 +163,11 @@ def _ensure_repo_shared_dep(
       doesn't already carry an explicit ``@<ref>`` pin, the upstream
       ``HEAD`` is resolved to a concrete SHA first and the explicit
       pin is passed through to ``uv add``. Without the explicit pin,
-      a re-run of ``init`` against an already-onboarded consumer is
-      a no-op for resolution (``uv add`` sees the dep already
-      satisfied by ``uv.lock`` and skips the git-fetch), so the SHA
-      never advances past whatever first onboarded the consumer. With
-      the explicit pin, every ``init`` re-run matches an ``upgrade``
-      to current HEAD.
+      ``uv add`` against an already-satisfied ``uv.lock`` skips the
+      git-fetch, so the recovery re-run of ``init`` on an
+      out-of-sync consumer would freeze the SHA at whatever first
+      onboarded it; resolving ``HEAD`` here pins the repair to the
+      current upstream.
     - ``_inject_shared_testpaths`` (tomlkit round-trip) appends
       ``_repo_shared/tests`` to
       ``[tool.pytest.ini_options] testpaths`` so a bare ``pytest``
@@ -343,21 +345,101 @@ def _running_from_local_repo_shared() -> Path | None:
     return None
 
 
-def _refuse_when_repo_shared(subcommand: str) -> ExitCode | None:
-    """Return ``USAGE`` exit if invoked from a repo-shared clone.
+class RepoState(Enum):
+    """What a repo is, from the CLI's point of view.
 
-    ``init`` / ``upgrade`` / ``status`` manipulate a consumer's
-    vendored ``_repo_shared/`` content; they have no meaning in
-    the source repo. The parser also hides these from ``--help``
-    when running from repo-shared, but a user could still type the
-    name. Returning ``None`` means "carry on".
+    Drives both ``--help`` subcommand visibility (against the cwd)
+    and the per-command runtime refusal (against the resolved
+    target). ``SOURCE`` and ``ONBOARDED`` are positively detected;
+    ``PLAIN`` is the fallthrough for anything else, including a
+    not-yet-onboarded repo.
+    """
+
+    SOURCE = "source"
+    ONBOARDED = "onboarded"
+    PLAIN = "plain"
+
+
+def _classify_repo(path: Path) -> RepoState:
+    """Classify ``path`` as repo-shared source, onboarded, or plain."""
+    if _is_repo_shared_source_root(path):
+        return RepoState.SOURCE
+    if (path / VENDOR_DIRNAME).is_dir():
+        return RepoState.ONBOARDED
+    return RepoState.PLAIN
+
+
+def _refuse_init_target(repo_root: Path) -> ExitCode | None:
+    """Return ``USAGE`` unless ``init`` has work to do on ``repo_root``.
+
+    ``init`` onboards a not-yet-onboarded repo or repairs one whose
+    vendored content is out of sync with the upstream. Two targets are
+    a usage error:
+
+    - repo-shared's own source -- it *is* the upstream, never a
+      consumer. The default target is the cwd, so running ``init``
+      with no path from a clone lands here; the message steers the
+      caller to pass the path of the repo they mean to onboard.
+    - an already-onboarded consumer that is fully in sync -- there is
+      nothing to do; ``upgrade`` bumps the pin and ``status`` inspects
+      drift. An onboarded-but-out-of-sync target is *not* refused: a
+      prior ``init`` that aborted on a sync violation leaves
+      ``_repo_shared/`` in place, and re-running ``init`` after
+      clearing the violation is the documented recovery.
+    """
+    state = _classify_repo(repo_root)
+    if state is RepoState.SOURCE:
+        _eprint(
+            f"init onboards a plain repo; {repo_root} is repo-shared's "
+            "own source. Pass the path to the repo you want to onboard."
+        )
+        return ExitCode.USAGE
+    if state is RepoState.ONBOARDED and not check_in_sync(repo_root):
+        _eprint(
+            f"{repo_root} is already onboarded; use `upgrade` to bump "
+            "the pinned SHA or `status` to inspect drift."
+        )
+        return ExitCode.USAGE
+    return None
+
+
+def _refuse_when_target_is_source(
+    subcommand: str, repo_root: Path
+) -> ExitCode | None:
+    """Return ``USAGE`` when ``repo_root`` is repo-shared's own source.
+
+    ``upgrade`` / ``status`` operate on an onboarded consumer's
+    vendored ``_repo_shared/``; repo-shared itself is the source and
+    has no vendored copy, so pointing them at it is a usage error.
+    Any other target -- including from a maintainer's clone via an
+    explicit path -- carries on (a plain, never-onboarded target is
+    handled by each command's own "not onboarded" path).
+    """
+    if _classify_repo(repo_root) is not RepoState.SOURCE:
+        return None
+    _eprint(
+        f"`{subcommand}` operates on an onboarded consumer; {repo_root} "
+        "is repo-shared's own source. Point it at an onboarded repo."
+    )
+    return ExitCode.USAGE
+
+
+def _refuse_run_tests_from_clone() -> ExitCode | None:
+    """Return ``USAGE`` if ``run-tests`` is invoked from a repo-shared clone.
+
+    ``run-tests`` runs the delivered suite through the *consumer's*
+    pinned repo-shared version. Driving it from a clone would run it
+    through the clone's (potentially different) version instead, so
+    it is consumer-only; maintainers dogfood via ``uv run pytest
+    shared/tests`` from the source tree.
     """
     if _running_from_local_repo_shared() is None:
         return None
     _eprint(
-        f"``{subcommand}`` is a consumer-side subcommand and only "
-        "makes sense from a repo that pins epilatow-repo-shared. "
-        "Run it from a consumer instead."
+        "`run-tests` runs a consumer's delivered suite against its own "
+        "pinned repo-shared; run it from the onboarded repo (via "
+        "`_repo_shared/repo-shared run-tests`), not from a clone. "
+        "Maintainers use `uv run pytest shared/tests`."
     )
     return ExitCode.USAGE
 
@@ -877,10 +959,10 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
 
 
 def _cmd_init(args: argparse.Namespace) -> ExitCode:
-    refusal = _refuse_when_repo_shared("init")
+    repo_root = _resolve_consumer_root(args.path)
+    refusal = _refuse_init_target(repo_root)
     if refusal is not None:
         return refusal
-    repo_root = _resolve_consumer_root(args.path)
     if not _git_repo(repo_root):
         _eprint(f"not a git repo: {repo_root}")
         return ExitCode.ERROR
@@ -952,10 +1034,10 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
     resumes (target SHA + ff-mergeable) or recreates fresh
     (the default branch moved on, ff-merge no longer clean).
     """
-    refusal = _refuse_when_repo_shared("upgrade")
+    consumer_root = _resolve_consumer_root(args.path)
+    refusal = _refuse_when_target_is_source("upgrade", consumer_root)
     if refusal is not None:
         return refusal
-    consumer_root = _resolve_consumer_root(args.path)
     if not _git_repo(consumer_root):
         _eprint(f"not a git repo: {consumer_root}")
         return ExitCode.ERROR
@@ -1520,10 +1602,10 @@ def _cmd_revendor(args: argparse.Namespace) -> ExitCode:
 
 
 def _cmd_status(args: argparse.Namespace) -> ExitCode:
-    refusal = _refuse_when_repo_shared("status")
+    repo_root = _resolve_consumer_root(args.path)
+    refusal = _refuse_when_target_is_source("status", repo_root)
     if refusal is not None:
         return refusal
-    repo_root = _resolve_consumer_root(args.path)
     if not _git_repo(repo_root):
         _eprint(f"not a git repo: {repo_root}")
         return ExitCode.ERROR
@@ -1593,14 +1675,14 @@ def _cmd_run_tests(args: argparse.Namespace) -> ExitCode:
     two don't carry the consumer's other deps and would either lack
     ``pytest`` or run the gates against the wrong file set.
 
-    Refuses when invoked from a repo-shared clone (the four
-    delivered tests dogfood via the source-tree ``testpaths`` entry
-    there; ``uv run pytest shared/tests`` is the equivalent for
+    Refuses when invoked from a repo-shared clone (the delivered
+    tests dogfood via the source-tree ``testpaths`` entry there;
+    ``uv run pytest shared/tests`` is the equivalent for
     maintainers). Returncode mapping mirrors ``pytest``'s own:
     0 -> ``SUCCESS``, 1 -> ``WARNING`` (test failures), anything
     else -> ``ERROR`` (collection failure, interrupt, etc.).
     """
-    refusal = _refuse_when_repo_shared("run-tests")
+    refusal = _refuse_run_tests_from_clone()
     if refusal is not None:
         return refusal
     repo_root = _resolve_consumer_root(args.path)
@@ -1669,16 +1751,23 @@ def _walk_for_vendor_links(
 def args_parser() -> argparse.ArgumentParser:
     """Build the CLI parser with context-aware subcommand visibility.
 
-    The same module ships from a repo-shared clone (maintainer)
-    and from every consumer's installed package, but only a subset
-    of subcommands is meaningful in each context:
+    The same module ships from a repo-shared clone and from every
+    consumer's installed package, but which subcommands are usable
+    depends on the state of the repo the CLI is invoked in (the cwd,
+    classified by ``_classify_repo``):
 
-    - ``init`` / ``upgrade`` / ``status`` / ``run-tests`` -- only in a
-      consumer.
-    - ``upgrade-tools`` -- only in a repo-shared clone (maintainer-side
-      dev shortcut for bumping the pinned tool deps).
-    - ``_revendor`` -- always hidden (subprocess-only entry point
-      called by ``_cmd_upgrade``).
+    - ``SOURCE`` (a repo-shared clone) -- ``init`` / ``upgrade`` /
+      ``status`` operate on another repo passed by path, plus the
+      maintainer-only ``upgrade-tools``. ``run-tests`` is hidden: it
+      must run through the consumer's own pinned version.
+    - ``ONBOARDED`` (a consumer) -- ``upgrade`` / ``status`` /
+      ``run-tests`` against the implicit cwd target. ``init`` is
+      hidden (already onboarded); ``upgrade-tools`` is hidden
+      (maintainer-only).
+    - ``PLAIN`` (not yet onboarded) -- only ``init`` makes sense.
+
+    ``_revendor`` is always hidden (subprocess-only entry point
+    called by ``_cmd_upgrade``).
 
     ``help=argparse.SUPPRESS`` on ``add_parser`` doesn't actually
     suppress entries in the subparser listing in current argparse
@@ -1687,11 +1776,13 @@ def args_parser() -> argparse.ArgumentParser:
     hidden commands and by passing a custom ``metavar`` to
     ``add_subparsers`` that lists only the visible ones.
     """
-    is_repo_shared = _running_from_local_repo_shared() is not None
-    if is_repo_shared:
-        visible = ["upgrade-tools"]
+    cwd_state = _classify_repo(Path.cwd())
+    if cwd_state is RepoState.SOURCE:
+        visible = ["init", "upgrade", "status", "upgrade-tools"]
+    elif cwd_state is RepoState.ONBOARDED:
+        visible = ["upgrade", "status", "run-tests"]
     else:
-        visible = ["init", "upgrade", "status", "run-tests"]
+        visible = ["init"]
 
     parser = argparse.ArgumentParser(
         prog="repo-shared",
@@ -1715,14 +1806,28 @@ def args_parser() -> argparse.ArgumentParser:
         """
         return {"help": text} if name in visible else {}
 
+    def _add_repo_arg(parser: argparse.ArgumentParser, help_text: str) -> None:
+        """Add the ``--repo`` target option.
+
+        The target repo is an option, not a positional, so it never
+        collides with ``upgrade``'s optional ``sha`` positional --
+        two optional positionals bind ambiguously (a lone argument
+        fills the first), which would misread ``upgrade <path>`` as
+        a SHA.
+        """
+        parser.add_argument(
+            "--repo",
+            dest="path",
+            default=None,
+            metavar="PATH",
+            help=help_text,
+        )
+
     p_init = sub.add_parser(
         "init", **_help_for("init", "onboard a repo for the first time")
     )
-    p_init.add_argument(
-        "path",
-        nargs="?",
-        default=None,
-        help="consumer repo root (default: cwd)",
+    _add_repo_arg(
+        p_init, "repo to onboard (default: cwd; required from a clone)"
     )
     p_init.add_argument(
         "--source",
@@ -1740,12 +1845,7 @@ def args_parser() -> argparse.ArgumentParser:
         default=None,
         help="specific SHA to pin (default: default branch HEAD)",
     )
-    p_up.add_argument(
-        "path",
-        nargs="?",
-        default=None,
-        help="consumer repo root (default: cwd)",
-    )
+    _add_repo_arg(p_up, "consumer repo root (default: cwd)")
     p_up.add_argument(
         "--source",
         default=None,
@@ -1805,12 +1905,7 @@ def args_parser() -> argparse.ArgumentParser:
         "status",
         **_help_for("status", "show pinned SHA and any vendor drift"),
     )
-    p_status.add_argument(
-        "path",
-        nargs="?",
-        default=None,
-        help="consumer repo root (default: cwd)",
-    )
+    _add_repo_arg(p_status, "consumer repo root (default: cwd)")
 
     p_run_tests = sub.add_parser(
         "run-tests",
@@ -1828,12 +1923,7 @@ def args_parser() -> argparse.ArgumentParser:
             "(== `uv run pytest _repo_shared/tests`)",
         ),
     )
-    p_run_tests.add_argument(
-        "path",
-        nargs="?",
-        default=None,
-        help="consumer repo root (default: cwd)",
-    )
+    _add_repo_arg(p_run_tests, "consumer repo root (default: cwd)")
     p_run_tests.add_argument(
         "-v", "--verbose", action="store_true", help="verbose pytest output"
     )

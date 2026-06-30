@@ -59,6 +59,7 @@ def test_uvx_from_git_invokes_repo_shared_init(
             f"git+file://{_shared_fake_source}",
             "repo-shared",
             "init",
+            "--repo",
             str(consumer),
         ],
         capture_output=True,

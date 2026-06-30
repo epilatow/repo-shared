@@ -10,16 +10,21 @@ import pytest
 
 from epilatow_repo_shared import sp
 from epilatow_repo_shared.cli import (
+    RepoState,
+    _classify_repo,
     _compose_bumped_pyproject,
     _inject_shared_testpaths,
     _project_name,
     _read_locked_sha,
     _read_pinned_deps,
+    _refuse_init_target,
+    _refuse_when_target_is_source,
     _resolve_compatible_bumps,
     _snapshot_vendored_paths,
     _worktree_has_expected_bumps,
     args_parser,
 )
+from epilatow_repo_shared.exit_codes import ExitCode
 
 _PYPROJECT_WITH_PINS = """\
 [project]
@@ -80,6 +85,34 @@ def test_args_parser_init_defaults() -> None:
     assert args.path is None
 
 
+def test_args_parser_repo_flag_sets_path() -> None:
+    """The target repo is the ``--repo`` option, parsed into ``path``."""
+    args = args_parser().parse_args(["init", "--repo", "/some/repo"])
+    assert args.path == "/some/repo"
+
+
+def test_args_parser_upgrade_sha_and_repo_are_independent() -> None:
+    """``sha`` is the lone positional; the target is the ``--repo`` option.
+
+    A single bare positional is the ``sha``, never the target -- the
+    two-optional-positional ambiguity that would misread
+    ``upgrade <path>`` as a SHA is gone.
+    """
+    args = args_parser().parse_args(["upgrade", "abc1234", "--repo", "/x"])
+    assert args.sha == "abc1234"
+    assert args.path == "/x"
+
+    repo_only = args_parser().parse_args(["upgrade", "--repo", "/x"])
+    assert repo_only.sha is None
+    assert repo_only.path == "/x"
+
+
+def test_args_parser_rejects_bare_positional_path() -> None:
+    """A bare positional target is rejected, not silently misbound."""
+    with pytest.raises(SystemExit):
+        args_parser().parse_args(["status", "/some/repo"])
+
+
 def test_args_parser_upgrade_with_sha() -> None:
     parser = args_parser()
     args = parser.parse_args(["upgrade", "abc1234"])
@@ -97,6 +130,79 @@ def test_args_parser_upgrade_base() -> None:
     parser = args_parser()
     args = parser.parse_args(["upgrade", "abc1234", "--base", "main"])
     assert args.base == "main"
+
+
+def _make_source_repo(root: Path) -> Path:
+    (root / "src" / "epilatow_repo_shared").mkdir(parents=True)
+    (root / "shared").mkdir()
+    return root
+
+
+def _make_onboarded_repo(root: Path) -> Path:
+    (root / "_repo_shared").mkdir(parents=True)
+    return root
+
+
+def test_classify_repo_detects_source(tmp_path: Path) -> None:
+    assert _classify_repo(_make_source_repo(tmp_path)) is RepoState.SOURCE
+
+
+def test_classify_repo_detects_onboarded(tmp_path: Path) -> None:
+    repo = _make_onboarded_repo(tmp_path)
+    assert _classify_repo(repo) is RepoState.ONBOARDED
+
+
+def test_classify_repo_falls_back_to_plain(tmp_path: Path) -> None:
+    assert _classify_repo(tmp_path) is RepoState.PLAIN
+
+
+def test_refuse_init_target_allows_plain(tmp_path: Path) -> None:
+    assert _refuse_init_target(tmp_path) is None
+
+
+def test_refuse_init_target_blocks_source(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    refusal = _refuse_init_target(_make_source_repo(tmp_path))
+    assert refusal == ExitCode.USAGE
+    assert "repo-shared's own source" in capsys.readouterr().err
+
+
+def test_refuse_init_target_allows_out_of_sync_onboarded(
+    tmp_path: Path,
+) -> None:
+    """A bare ``_repo_shared/`` is onboarded but out of sync.
+
+    The canonical paths are absent, so ``check_in_sync`` reports
+    violations and ``init`` is allowed through to repair them rather
+    than refused -- the documented recovery from an aborted onboard.
+    The clean-onboarded refusal is exercised end-to-end in
+    ``test_cli_integration.py::test_init_refuses_on_already_onboarded_repo``.
+    """
+    assert _refuse_init_target(_make_onboarded_repo(tmp_path)) is None
+
+
+def test_refuse_when_target_is_source_allows_onboarded(
+    tmp_path: Path,
+) -> None:
+    repo = _make_onboarded_repo(tmp_path)
+    assert _refuse_when_target_is_source("status", repo) is None
+
+
+def test_refuse_when_target_is_source_allows_plain(tmp_path: Path) -> None:
+    assert _refuse_when_target_is_source("upgrade", tmp_path) is None
+
+
+def test_refuse_when_target_is_source_blocks_source(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    refusal = _refuse_when_target_is_source(
+        "upgrade", _make_source_repo(tmp_path)
+    )
+    assert refusal == ExitCode.USAGE
+    err = capsys.readouterr().err
+    assert "upgrade" in err
+    assert "repo-shared's own source" in err
 
 
 def test_snapshot_empty_when_no_vendor_dir(tmp_path: Path) -> None:
