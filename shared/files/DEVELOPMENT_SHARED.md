@@ -260,6 +260,9 @@ that mentions it.
 - Use `- component: Summary of change.` format. Match what's already in
   `git log`; the existing repo style is the source of truth.
 - Include a `Co-Authored-By:` trailer for AI-assisted commits.
+- Wrap the message body at about 72 columns. `git log` indents the body by four
+  spaces when it displays it, so a wider body overruns 80 columns in the log;
+  the subject stays short and on one line.
 
 **Explain the why, not the what.** The diff already shows what changed. The
 commit message should give a future reader the context they can't derive from
