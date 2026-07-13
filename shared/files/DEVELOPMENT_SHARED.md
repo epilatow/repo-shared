@@ -63,11 +63,15 @@ or side effects, or flag invariants the type system can't enforce.
   Testing section for how.
 - Unused function / method / lambda parameters are flagged (ruff's `ARG` rules,
   part of the canonical default rule set). Remove a genuinely dead parameter;
-  for one that must stay (a callback signature, an interface override), prefix
-  it with `_` (e.g. `_event`) to silence the check. A pytest fixture requested
-  only for its side effect can't be underscored -- pytest resolves fixtures by
-  exact name -- so request it with `@pytest.mark.usefixtures("name")` and drop
-  the parameter, or suppress the single line with `# noqa: ARG001`.
+  for one that must stay (a callback signature, an interface override), mark it
+  unused at the signature -- prefix it with `_` (e.g. `_event`), or absorb it
+  in a `**_kwargs` catch-all when the caller passes it by keyword so its name
+  must stay. Never silence the check by `del`-ing the parameter in the body to
+  appease the linter; that hides the unused-ness from the signature and reads
+  as a deliberate deletion. A pytest fixture requested only for its side effect
+  can't be underscored -- pytest resolves fixtures by exact name -- so request
+  it with `@pytest.mark.usefixtures("name")` and drop the parameter, or
+  suppress the single line with `# noqa: ARG001`.
 - Strongly typed. Don't use `Any` for a value this code inspects or accesses --
   model it with a `TypedDict`, dataclass, or pydantic model (a bare
   `Dict[str, Any]` standing in for structured data is the usual offender).
