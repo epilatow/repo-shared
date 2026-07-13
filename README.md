@@ -231,18 +231,21 @@ Useful flags:
   both. Before doing any upgrade work, `--push` probes the eventual push
   outcome with `git push --dry-run` and bails if origin would reject -- a
   missing credential or branch-protection rule fails immediately instead of
-  after a full setup + test cycle.
+  after a full setup + test cycle. A local-only consumer (no `origin` remote)
+  has nowhere to push, so `--push` there lands the ff-merge on your local
+  default branch and skips both the dry-run probe and the push.
 
 - `--force-retry` drops a prior update worktree that carries uncommitted
   changes and rebuilds fresh. Without it, dirty worktrees block the upgrade so
   debug edits aren't silently dropped.
 
 - `--base <ref>` builds the update worktree on top of `<ref>` instead of the
-  default `origin/<default-branch>`. Use it to base the upgrade on local work
-  that isn't pushed yet -- e.g. `--base main` (or `--base HEAD`) carries your
-  unpushed commits into the worktree, so the upgrade lands on top of them
-  rather than on the stale origin tip. The push target on `--push` stays your
-  local default branch either way.
+  default base -- `origin/<default-branch>`, or the local `<default-branch>`
+  when there is no origin. Use it to base the upgrade on local work that isn't
+  pushed yet -- e.g. `--base main` (or `--base HEAD`) carries your unpushed
+  commits into the worktree, so the upgrade lands on top of them rather than on
+  the stale origin tip. The push target on `--push` stays your local default
+  branch either way (and with no origin there is no push -- see `--push`).
 
 ## Override mechanisms
 

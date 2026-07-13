@@ -955,6 +955,7 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
         upstream_ref=upstream_ref,
         default_branch=default_branch,
         keep_worktree=args.keep_worktree,
+        has_origin=_has_origin(repo_root),
     )
 
 
@@ -1071,8 +1072,10 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
         )
         return ExitCode.DIRTY
 
+    has_origin = _has_origin(consumer_root)
     if (
-        sp.run(
+        has_origin
+        and sp.run(
             ["git", "fetch", "origin"],
             cwd=consumer_root,
             check=False,
@@ -1086,24 +1089,31 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
     default_branch = _default_branch(consumer_root)
     if default_branch is None:
         _eprint(
-            "could not determine origin's default branch; ensure the "
-            "consumer has an ``origin`` remote with HEAD set."
+            "could not determine the default branch; ensure the "
+            "consumer has a local ``main`` / ``master`` branch, or an "
+            "``origin`` remote with HEAD set."
         )
         return ExitCode.ERROR
-    # The worktree (and the staleness ff-check) build on this ref;
-    # ``--base`` overrides the origin default so an upgrade can sit on
-    # top of local work that isn't pushed yet. The push target on
-    # ``--push`` stays the local ``default_branch`` either way.
-    upstream_ref = args.base or f"origin/{default_branch}"
+    # The worktree (and the staleness ff-check) build on this ref. With
+    # an ``origin`` it is the fetched remote tip; a local-only consumer
+    # has none, so it is the local branch. ``--base`` overrides either
+    # so an upgrade can sit on top of local work that isn't pushed yet.
+    upstream_ref = args.base or (
+        f"origin/{default_branch}" if has_origin else default_branch
+    )
 
-    if args.push and not _can_push(consumer_root, default_branch):
-        _eprint(
-            f"git push --dry-run origin {default_branch} failed; "
-            "refusing to do upgrade work that will fail to push at "
-            "the end. Resolve the upstream-permission / fast-forward "
-            "issue and rerun."
-        )
-        return ExitCode.ERROR
+    # A local-only consumer has nowhere to push, so --push means "land
+    # the ff-merge locally"; the pre-flight push check only applies when
+    # there is an origin to push to.
+    if has_origin and args.push:
+        if not _can_push(consumer_root, default_branch):
+            _eprint(
+                f"git push --dry-run origin {default_branch} failed; "
+                "refusing to do upgrade work that will fail to push at "
+                "the end. Resolve the upstream-permission / fast-forward "
+                "issue and rerun."
+            )
+            return ExitCode.ERROR
 
     branch = f"repo-shared/update-{short}"
     wt_path = consumer_root / ".wt" / f"repo-shared-update-{short}"
@@ -1171,6 +1181,7 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
         upstream_ref=upstream_ref,
         default_branch=default_branch,
         keep_worktree=args.keep_worktree,
+        has_origin=has_origin,
     )
 
 
@@ -1189,8 +1200,31 @@ def _resolve_upstream_head(source: str) -> str | None:
     return result.stdout.split()[0]
 
 
+def _has_origin(repo_root: Path) -> bool:
+    """True when the repo has an ``origin`` remote configured.
+
+    A local-only consumer (e.g. a ``git.local`` repo never pushed to a
+    forge) has none, so the origin-dependent steps of an upgrade --
+    the fetch, ``origin/HEAD`` discovery, and the push -- are skipped.
+    """
+    return (
+        sp.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=repo_root,
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
 def _default_branch(repo_root: Path) -> str | None:
-    """Return ``origin/HEAD``'s branch name (e.g. ``main``)."""
+    """Return the repo's default branch, or ``None`` if undeterminable.
+
+    Prefers ``origin/HEAD``'s target. A local-only repo has no origin,
+    so fall back to a local ``main`` / ``master``, else the current
+    branch.
+    """
     result = sp.run(
         ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
         cwd=repo_root,
@@ -1198,11 +1232,15 @@ def _default_branch(repo_root: Path) -> str | None:
         text=True,
         check=False,
     )
-    if result.returncode != 0:
-        return None
-    ref = result.stdout.strip()
-    prefix = "refs/remotes/origin/"
-    return ref[len(prefix) :] if ref.startswith(prefix) else None
+    if result.returncode == 0:
+        ref = result.stdout.strip()
+        prefix = "refs/remotes/origin/"
+        if ref.startswith(prefix):
+            return ref[len(prefix) :]
+    for candidate in ("main", "master"):
+        if _git_branch_exists(repo_root, candidate):
+            return candidate
+    return _current_branch(repo_root)
 
 
 def _git_branch_exists(repo_root: Path, branch: str) -> bool:
@@ -1419,23 +1457,29 @@ def _ff_merge_and_push_then_cleanup(
     upstream_ref: str,
     default_branch: str,
     keep_worktree: bool,
+    has_origin: bool,
 ) -> ExitCode:
     """ff-merge worktree branch into default branch, push, cleanup.
+
+    With an ``origin`` the merged default branch is pushed; a
+    local-only consumer has none, so the merge lands locally and
+    nothing is pushed.
 
     If the main checkout is on a non-default branch (e.g. a
     feature branch the maintainer is mid-work on), this function
     needs to switch to the default branch to do the ff-merge.
-    Capture the prior branch and restore it after the push lands
+    Capture the prior branch and restore it after the merge lands
     so the user comes back to where they were -- with an
     informational note so the temporary switch isn't silent.
     """
-    # Re-fetch in case origin moved while we tested.
-    sp.run(
-        ["git", "fetch", "origin"],
-        cwd=consumer_root,
-        check=False,
-        timeout=sp.LONG_TIMEOUT_SECONDS,
-    )
+    # Re-fetch in case origin moved while we tested (no-op with no origin).
+    if has_origin:
+        sp.run(
+            ["git", "fetch", "origin"],
+            cwd=consumer_root,
+            check=False,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
+        )
     if not _git_branch_ff_mergeable(consumer_root, branch, upstream_ref):
         _eprint(
             f"{branch} no longer ff-merges into {upstream_ref} "
@@ -1470,19 +1514,25 @@ def _ff_merge_and_push_then_cleanup(
         _eprint("ff-merge failed; aborting push.")
         return ExitCode.ERROR
 
-    push = sp.run(
-        ["git", "push", "origin", default_branch],
-        cwd=consumer_root,
-        check=False,
-        timeout=sp.LONG_TIMEOUT_SECONDS,
-    )
-    if push.returncode != 0:
-        _eprint(
-            "git push failed. The merge is in place locally; resolve "
-            "the upstream rejection and push manually."
+    if has_origin:
+        push = sp.run(
+            ["git", "push", "origin", default_branch],
+            cwd=consumer_root,
+            check=False,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
         )
-        return ExitCode.ERROR
-    print(f"pushed {default_branch}.")
+        if push.returncode != 0:
+            _eprint(
+                "git push failed. The merge is in place locally; resolve "
+                "the upstream rejection and push manually."
+            )
+            return ExitCode.ERROR
+        print(f"pushed {default_branch}.")
+    else:
+        print(
+            f"ff-merged into {default_branch}; no origin remote, so "
+            "nothing to push."
+        )
 
     if not keep_worktree:
         _remove_worktree(consumer_root, wt_path)

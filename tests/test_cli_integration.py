@@ -622,6 +622,31 @@ def _setup_consumer_with_origin(
     return origin, "main"
 
 
+def _setup_consumer_no_origin(consumer: Path, source_url: str) -> str:
+    """Init + commit a consumer with no ``origin`` remote.
+
+    The local-only analogue of ``_setup_consumer_with_origin`` -- a
+    ``git.local`` checkout never pushed to a forge. Same init + commit
+    on ``main``, but no bare-clone origin, so the upgrade's fetch /
+    ``origin/HEAD`` discovery / push all have to degrade to local-only.
+    Returns the default branch name.
+    """
+    _git_init(consumer)
+    exit_code = _run_cli(
+        ["init", "--source", source_url, "--repo", str(consumer)]
+    )
+    assert exit_code == ExitCode.SUCCESS
+    _git_in(consumer, "add", "-A")
+    _git_in(consumer, "commit", "-m", "initial onboard")
+    assert (
+        subprocess.check_output(
+            ["git", "remote"], cwd=consumer, text=True
+        ).strip()
+        == ""
+    ), "fixture must be genuinely local-only"
+    return "main"
+
+
 def _advance_origin_to_diverge(origin: Path, tmp_path: Path) -> None:
     """Plant a commit directly on ``origin``'s main so it diverges.
 
@@ -923,6 +948,79 @@ def test_upgrade_with_push_rejects_when_origin_is_non_fast_forward(
     short = bump_sha[:7]
     wt_path = consumer / ".wt" / f"repo-shared-update-{short}"
     assert not wt_path.exists()
+
+
+def test_upgrade_no_origin_creates_worktree_and_bumps_lock(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A local-only consumer (no ``origin``) can still stage an upgrade.
+
+    Regression guard: ``upgrade`` used to hard-require ``origin`` -- the
+    ``git fetch origin`` and ``origin/HEAD`` discovery both failed
+    outright -- so a ``git.local`` consumer could not upgrade at all.
+    With no origin it bases the worktree on the local default branch.
+    """
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_no_origin(consumer, f"git+file://{fake_source}")
+    bump_sha = _add_bump_commit(fake_source)
+    capsys.readouterr()
+
+    exit_code = _run_cli(
+        [
+            "upgrade",
+            bump_sha,
+            "--repo",
+            str(consumer),
+            "--source",
+            f"git+file://{fake_source}",
+        ]
+    )
+    assert exit_code == ExitCode.SUCCESS
+    short = bump_sha[:7]
+    wt_path = consumer / ".wt" / f"repo-shared-update-{short}"
+    assert wt_path.is_dir()
+    assert cli._read_locked_sha(wt_path) == bump_sha
+
+
+@_NPX_REQUIRED
+def test_upgrade_no_origin_push_ff_merges_locally(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--push`` on a local-only consumer lands the ff-merge locally.
+
+    With no origin there is nowhere to push, so ``--push`` validates,
+    ff-merges the bump into the local default branch, and cleans up the
+    worktree -- without failing on the missing remote.
+    """
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_no_origin(consumer, f"git+file://{fake_source}")
+    bump_sha = _add_bump_commit(fake_source)
+    capsys.readouterr()
+
+    exit_code = _run_cli(
+        [
+            "upgrade",
+            bump_sha,
+            "--repo",
+            str(consumer),
+            "--source",
+            f"git+file://{fake_source}",
+            "--push",
+        ]
+    )
+    assert exit_code == ExitCode.SUCCESS
+    assert "no origin remote" in capsys.readouterr().out
+    # The bump landed on the consumer's own checkout via the local
+    # ff-merge, and the worktree was cleaned up.
+    assert cli._read_locked_sha(consumer) == bump_sha
+    short = bump_sha[:7]
+    assert not (consumer / ".wt" / f"repo-shared-update-{short}").exists()
 
 
 def test_upgrade_run_tests_failure_leaves_worktree_with_bump_commit(
