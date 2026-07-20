@@ -195,6 +195,10 @@ _repo_shared/repo-shared status             # show pinned SHA + any drift
 _repo_shared/repo-shared run-tests          # run just the delivered shared tests
 ```
 
+`status` ignores Python bytecode and tool cache directories under
+`_repo_shared/`; those are runtime artifacts, not vendored content drift.
+Unexpected non-cache files still surface as issues.
+
 `run-tests` is a shortcut for
 `uv run --project <consumer> pytest _repo_shared/tests` -- run it to verify the
 delivered gates pass against your consumer without the rest of your suite. Pass

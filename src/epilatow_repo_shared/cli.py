@@ -32,6 +32,7 @@ from epilatow_repo_shared.exit_codes import ExitCode
 from epilatow_repo_shared.vendor import (
     VENDOR_DIRNAME,
     _is_repo_shared_source_root,
+    _is_vendor_runtime_artifact,
     check_in_sync,
     cleanup_stale_vendored,
     consumer_paths,
@@ -1682,6 +1683,8 @@ def _cmd_status(args: argparse.Namespace) -> ExitCode:
     if vendor_dir.is_dir():
         for path in vendor_dir.rglob("*"):
             if path.is_symlink() or not path.is_file():
+                continue
+            if _is_vendor_runtime_artifact(path, vendor_dir):
                 continue
             if path not in expected:
                 extras.append(f"extra: {path.relative_to(repo_root)}")

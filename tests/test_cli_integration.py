@@ -193,6 +193,35 @@ def test_status_after_init_reports_pinned_sha_in_sync(
     assert head_sha in out
 
 
+def test_status_ignores_runtime_caches_but_flags_other_extras(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    consumer = _init_consumer(tmp_path)
+    tests_dir = consumer / "_repo_shared" / "tests"
+    artifacts = (
+        tests_dir / "__pycache__" / "test_shared.cpython-314.pyc",
+        tests_dir / ".pytest_cache" / "v" / "cache" / "nodeids",
+        tests_dir / ".mypy_cache" / "3.14" / "test_shared.data.json",
+        tests_dir / ".ruff_cache" / "content",
+    )
+    for artifact in artifacts:
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text("generated\n")
+    capsys.readouterr()
+
+    exit_code = _run_cli(["status", "--repo", str(consumer)])
+    assert exit_code == ExitCode.SUCCESS
+    assert "vendor in sync" in capsys.readouterr().out
+
+    extra = tests_dir / "customer_cache" / "unexpected.txt"
+    extra.parent.mkdir()
+    extra.write_text("not generated\n")
+    exit_code = _run_cli(["status", "--repo", str(consumer)])
+    assert exit_code == ExitCode.ERROR
+    assert f"extra: {extra.relative_to(consumer)}" in capsys.readouterr().err
+
+
 def test_status_without_lockfile_reports_no_pin(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

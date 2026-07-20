@@ -88,6 +88,9 @@ def _dotfile_link_rel(rel: str) -> str:
 
 _CRUFT_SUFFIXES: tuple[str, ...] = ("~", ".swp", ".swo", ".bak", ".orig")
 _CRUFT_NAMES: frozenset[str] = frozenset({".DS_Store", "Thumbs.db"})
+_VENDOR_RUNTIME_CACHE_DIRS: frozenset[str] = frozenset(
+    {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+)
 
 
 def _is_cruft(name: str) -> bool:
@@ -103,6 +106,22 @@ def _is_cruft(name: str) -> bool:
     if name in _CRUFT_NAMES:
         return True
     return any(name.endswith(suffix) for suffix in _CRUFT_SUFFIXES)
+
+
+def _is_vendor_runtime_artifact(path: Path, vendor_dir: Path) -> bool:
+    """Return whether ``path`` is generated cache content.
+
+    Test and quality tools create cache directories alongside the vendored
+    tests they execute. Their files are runtime output rather than shared
+    content, so drift checks ignore them.
+    """
+    try:
+        relative = path.relative_to(vendor_dir)
+    except ValueError:
+        return False
+    return any(
+        part in _VENDOR_RUNTIME_CACHE_DIRS for part in relative.parent.parts
+    )
 
 
 def iter_shared(shared_root: Path) -> Iterator[tuple[str, Path, str]]:
@@ -601,13 +620,7 @@ class VendorDriftBase:
         for path in vendor_dir.rglob("*"):
             if path.is_symlink() or not path.is_file():
                 continue
-            # Skip pytest / mypy / ruff bytecode + cache artefacts
-            # that pytest creates under ``_repo_shared/tests/...``
-            # when it imports the shared test files; those are
-            # runtime cruft, not vendored content drift.
-            if any(part.endswith("_cache") for part in path.parts):
-                continue
-            if "__pycache__" in path.parts:
+            if _is_vendor_runtime_artifact(path, vendor_dir):
                 continue
             if path not in expected:
                 extras.append(path.relative_to(self.consumer_root))
