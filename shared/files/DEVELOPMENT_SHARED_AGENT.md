@@ -22,9 +22,15 @@ apply.
   files in `tests/`) and run them to establish a baseline. Flag any
   pre-existing testing problems before implementing planned changes -- a broken
   baseline affects how post-change tests are interpreted.
-- **Re-run after changes.** After modifying any code or utility, run the
-  associated tests (or the full suite if it's fast enough) before considering
-  the change complete.
+- **Commit before post-change testing or review.** Commit each coherent change
+  promptly so the state under validation is always inspectable. Once the
+  working tree contains changes intended for the commit, including untracked
+  additions, do not run tests or begin a review until those changes are
+  committed. Amend that commit with incremental fixes before each retest or
+  re-review rather than validating an uncommitted working tree.
+- **Re-run after changes.** After committing modifications to any code or
+  utility, run the associated tests (or the full suite if it's fast enough)
+  before considering the change complete.
 - **Look at file contents, not extensions.** Scripts that have
   `uv run --script` in their shebang are Python scripts, not shell scripts,
   regardless of file extension or lack thereof. Always open the file before
@@ -152,19 +158,25 @@ Approval for one merge or push does not authorize subsequent ones.
 
 ### Reviewing commits with `npx difit`
 
-The user reviews commits locally before authorizing a merge or push. When the
-user asks to review a commit (or a stack), publish it with `npx difit`.
-`npx difit` runs a web server, so the command does not exit immediately -- run
-it in the background.
+The user reviews commits locally before authorizing a merge or push. Never run
+`npx difit` unless the user explicitly requests that tool. Do not start it as
+part of the default code-review cycle or handoff: it runs a web server and can
+open or focus a browser window. When requested, run it in the background
+because the command does not exit immediately.
 
 ### All development work happens in a worktree under `$REPO/.wt/`
 
 Never edit the main checkout directly. Every develop / build / test / debug
-cycle runs in a `git worktree add` at `$REPO/.wt/<purpose>`, nested under the
-repo's own checkout. Be sure that .gitignore contains .wt/. Once the user has
-approved the merge and the work has landed on `main`, remove the worktree and
-any branches you created as part of the development effort (but don't touch
-other branches which may belong to other users or agents).
+cycle runs in a `git worktree add` under `$REPO/.wt/`, nested under the repo's
+own checkout. For an agent-created branch-backed worktree, the relative path
+under `.wt/` must exactly match the branch name: branch `<branch>` uses
+`$REPO/.wt/<branch>`. Do not invent a separate worktree-purpose name. Detached
+worktrees have no branch to match and follow their applicable naming rule, such
+as the SHA-based code-review worktrees below. Be sure that .gitignore contains
+.wt/. Once the user has approved the merge and the work has landed on `main`,
+remove the worktree and any branches you created as part of the development
+effort (but don't touch other branches which may belong to other users or
+agents).
 
 Development scratch -- plans, code-review write-ups, rejected-finding logs, any
 `tmp/` working document -- does NOT go inside the worktree. Write it to the
@@ -347,12 +359,14 @@ doesn't need to be extended for the rule to apply.
 
 ## Code review
 
-After each agent-driven develop / test / commit cycle, the default is to spawn
+After each agent-driven develop / commit / test cycle, the default is to spawn
 a code-review subagent against the just-committed branch -- doc-only and
 lint-config commits included. Agent-driven reviews like this run BEFORE the
-user reviews the commit; if the user reviews and lands their own feedback, an
-additional agent-driven re-review is not the default -- only run one if the
-user explicitly asks for it.
+user reviews the commit. Any change the user requests after that review counts
+as user review feedback, including small follow-up edits during handoff. Amend
+the requested change and rerun the relevant tests or gates, but do not spawn
+another code-review subagent unless the user explicitly asks for one. Rerunning
+tests after user feedback does not imply a re-review.
 
 After the review returns, address each finding directly in the commit (amend).
 Findings the agent chooses NOT to address get appended to
