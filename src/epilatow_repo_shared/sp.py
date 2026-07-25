@@ -61,6 +61,7 @@ def run(
     cmd: Sequence[str],
     *,
     timeout: int = SHORT_TIMEOUT_SECONDS,
+    check: bool = False,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[Any]:
     """Run ``cmd`` with a mandatory timeout.
@@ -76,4 +77,4 @@ def run(
     callers that only inspect ``returncode`` get bytes and can ignore
     the payload.
     """
-    return subprocess.run(cmd, timeout=timeout, **kwargs)
+    return subprocess.run(cmd, timeout=timeout, check=check, **kwargs)

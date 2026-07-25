@@ -581,7 +581,7 @@ class VendorDriftBase:
 
     def test_vendor_files_match_package(self) -> None:
         if _is_repo_shared_source_root(self.consumer_root):
-            import pytest  # noqa: PLC0415
+            import pytest
 
             pytest.skip("running from repo-shared source; no vendored copy")
         shared_root = package_shared_root()
@@ -604,7 +604,7 @@ class VendorDriftBase:
 
     def test_no_extra_vendored_files(self) -> None:
         if _is_repo_shared_source_root(self.consumer_root):
-            import pytest  # noqa: PLC0415
+            import pytest
 
             pytest.skip("running from repo-shared source; no vendored copy")
         shared_root = package_shared_root()

@@ -15,6 +15,7 @@ where users actually look.
 from __future__ import annotations
 
 import enum
+from typing import Self
 
 
 class ExitCode(enum.IntEnum):
@@ -29,7 +30,7 @@ class ExitCode(enum.IntEnum):
 
     description: str
 
-    def __new__(cls, value: int, description: str = "") -> ExitCode:
+    def __new__(cls, value: int, description: str = "") -> Self:
         obj = int.__new__(cls, value)
         obj._value_ = value
         obj.description = description

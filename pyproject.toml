@@ -52,11 +52,12 @@ line-length = 79
 target-version = "py311"
 
 # No [tool.ruff.lint] select on purpose. The delivered
-# test_code_quality.py injects the canonical rule set
-# (DEFAULT_RUFF_SELECT: E, F, W, I, B, UP, ARG) via --extend-select
-# for any repo that hasn't pinned its own select, so leaving it unset
-# makes repo-shared a default consumer and dogfoods that injection
-# directly. Pinning select here would suppress it.
+# test_code_quality.py keeps Ruff's pinned-version defaults and
+# injects the canonical categories (DEFAULT_RUFF_SELECT: E, F, W,
+# I, B, UP, ARG) via --extend-select for any repo that hasn't
+# pinned its own select, so leaving it unset makes repo-shared a
+# default consumer and dogfoods that combined baseline directly.
+# Pinning select here would suppress the injection.
 
 [tool.mypy]
 python_version = "3.11"

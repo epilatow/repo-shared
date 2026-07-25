@@ -76,18 +76,18 @@ into these tests:
   written to the consumer to enforce this -- the delivered ruff invocation
   passes the flag at runtime only when needed.
 
-  `ruff check` likewise injects the canonical lint rule set
+  `ruff check` likewise injects the canonical lint categories
   `["E", "F", "W", "I", "B", "UP", "ARG"]` via `--extend-select` when the
-  consumer hasn't declared its own `select` -- so a repo on the defaults
-  enforces the whole standard set, including `ARG` (flake8-unused-arguments)
-  for unused function / method / lambda parameters. A consumer that pins its
-  own `select` takes full control and the injection is suppressed; a consumer's
-  `extend-select` adds further rules on top. A config-file `ignore` /
-  `extend-ignore` does not drop an injected rule (a command-line
-  `--extend-select` overrides config ignores), so a single injected rule is
-  silenced only with a per-line `noqa` or by pinning `select`. As with
-  line-length, nothing is written to the consumer -- the flag is passed at
-  runtime only when needed.
+  consumer hasn't declared its own `select`. The resulting baseline is the
+  pinned Ruff version's curated defaults plus those categories, including `ARG`
+  (flake8-unused-arguments) for unused function / method / lambda parameters. A
+  consumer that pins its own `select` takes full control and the injection is
+  suppressed; a consumer's `extend-select` adds further rules on top. A
+  config-file `ignore` / `extend-ignore` does not drop an injected rule (a
+  command-line `--extend-select` overrides config ignores), so a single
+  injected rule is silenced only with a per-line `noqa` or by pinning `select`.
+  As with line-length, nothing is written to the consumer -- the flag is passed
+  at runtime only when needed.
 
 - **`test_markdown_format.py`** -- `mdformat --check --wrap=79 --number` (with
   the GFM + tables plugins) across every markdown file in the repo. Catches
@@ -337,11 +337,12 @@ A handful of tool settings live in your own config rather than under
 - **ruff** rules + Python line-length: set `[tool.ruff]` in your own
   `pyproject.toml` (e.g. `[tool.ruff] line-length = 79`,
   `[tool.ruff.lint] select = ["E", "F", ...]`). ruff reads these natively. When
-  you don't pin `select`, the delivered gate injects the canonical set
+  you don't pin `select`, the delivered gate keeps Ruff's pinned-version
+  defaults and injects the canonical categories
   `["E", "F", "W", "I", "B", "UP", "ARG"]` via `--extend-select`; pinning your
   own `select` suppresses the injection and you own the rule set entirely (add
   `ARG` back if you want to keep unused-argument checking). `extend-select`
-  adds rules on top of the injected default; a config-file `ignore` does not
+  adds rules on top of that combined baseline; a config-file `ignore` does not
   remove an injected rule (use a per-line `noqa`, or pin `select`).
 - **mypy** strictness toggles + module overrides: set `[tool.mypy]` and
   `[[tool.mypy.overrides]]` in your own `pyproject.toml`. The delivered test

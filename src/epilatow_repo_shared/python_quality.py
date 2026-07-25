@@ -53,11 +53,12 @@ _VENDOR_EXCLUDE_RE = r"^_repo_shared/"
 
 DEFAULT_RUFF_LINE_LENGTH = 79
 
-# The canonical ruff lint rule set repo-shared enforces by default.
-# Injected via ``--extend-select`` (see ``_ruff_extend_select_args``)
-# when the consumer hasn't declared their own ``select``, so a repo
-# that just uses the defaults gets the whole standard set, evolved
-# centrally here. ``ARG`` (flake8-unused-arguments) flags unused
+# The canonical ruff lint rule set repo-shared adds to the pinned
+# Ruff version's defaults. Injected via ``--extend-select`` (see
+# ``_ruff_extend_select_args``) when the consumer hasn't declared
+# their own ``select``, so Ruff's curated defaults and these
+# centrally-managed categories evolve together. ``ARG``
+# (flake8-unused-arguments) flags unused
 # function / method / lambda parameters; a deliberately-unused
 # parameter is silenced with a leading underscore (ruff's
 # ``dummy-variable-rgx`` default), a side-effect-only pytest fixture
@@ -180,9 +181,10 @@ def run_ruff_lint(targets: Sequence[str], *, cwd: Path) -> None:
     always wins -- the flag is suppressed in that case.
 
     Injects ``DEFAULT_RUFF_SELECT`` via ``--extend-select`` so a repo
-    that hasn't curated its own ``select`` enforces the canonical rule
-    set (including ``ARG`` for unused arguments). A consumer that pins
-    ``select`` takes full control and the injection is suppressed (see
+    that hasn't curated its own ``select`` enforces the pinned Ruff
+    version's defaults plus the canonical categories (including
+    ``ARG`` for unused arguments). A consumer that pins ``select``
+    takes full control and the injection is suppressed (see
     ``_consumer_selects_ruff_rules``); a consumer's ``extend-select``
     adds further rules on top. A config-file ``ignore`` /
     ``extend-ignore`` does NOT drop an injected rule -- a command-line
@@ -381,9 +383,7 @@ def _normalize_exclude_dirs(exclude_dirs: Sequence[str]) -> frozenset[str]:
     """
     result: set[str] = set()
     for entry in exclude_dirs:
-        cleaned = entry
-        if cleaned.startswith("**/"):
-            cleaned = cleaned[3:]
+        cleaned = entry.removeprefix("**/")
         cleaned = cleaned.rstrip("/")
         if not cleaned:
             continue

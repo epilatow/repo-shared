@@ -414,6 +414,7 @@ def test_upgrade_tools_exits_clean_when_every_bump_conflicts(
         ],
         cwd=clone,
         capture_output=True,
+        check=False,
     )
     assert branch_check.returncode != 0, "bump branch should be deleted"
 

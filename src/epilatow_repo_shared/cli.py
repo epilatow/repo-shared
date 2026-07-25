@@ -225,7 +225,7 @@ def _inject_shared_testpaths(pyproject: Path) -> None:
     alone. Uses ``tomlkit`` for a round-trip that preserves the
     consumer's existing comments, key ordering, and whitespace.
     """
-    import tomlkit  # noqa: PLC0415  (deferred so CLI startup stays cheap)
+    import tomlkit  # Deferred so CLI startup stays cheap.
 
     text = pyproject.read_text(encoding="utf-8")
     doc = tomlkit.parse(text)
@@ -1106,15 +1106,18 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
     # A local-only consumer has nowhere to push, so --push means "land
     # the ff-merge locally"; the pre-flight push check only applies when
     # there is an origin to push to.
-    if has_origin and args.push:
-        if not _can_push(consumer_root, default_branch):
-            _eprint(
-                f"git push --dry-run origin {default_branch} failed; "
-                "refusing to do upgrade work that will fail to push at "
-                "the end. Resolve the upstream-permission / fast-forward "
-                "issue and rerun."
-            )
-            return ExitCode.ERROR
+    if (
+        has_origin
+        and args.push
+        and not _can_push(consumer_root, default_branch)
+    ):
+        _eprint(
+            f"git push --dry-run origin {default_branch} failed; "
+            "refusing to do upgrade work that will fail to push at "
+            "the end. Resolve the upstream-permission / fast-forward "
+            "issue and rerun."
+        )
+        return ExitCode.ERROR
 
     branch = f"repo-shared/update-{short}"
     wt_path = consumer_root / ".wt" / f"repo-shared-update-{short}"
@@ -1188,7 +1191,7 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
 
 def _resolve_upstream_head(source: str) -> str | None:
     """Resolve the SHA at HEAD of ``source``'s default branch."""
-    url = source[len("git+") :] if source.startswith("git+") else source
+    url = source.removeprefix("git+")
     result = sp.run(
         ["git", "ls-remote", url, "HEAD"],
         capture_output=True,
@@ -1577,7 +1580,7 @@ def _read_test_command(repo_root: Path) -> list[str]:
     if not pyproject.is_file():
         return default
     try:
-        import tomllib  # noqa: PLC0415
+        import tomllib
     except ImportError:
         return default
     try:

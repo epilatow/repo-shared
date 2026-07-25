@@ -749,10 +749,11 @@ def test_consumer_selects_ruff_rules_finds_ruff_toml_top_level_select(
 def test_consumer_selects_ruff_rules_ignores_extend_select_only(
     tmp_path: Path,
 ) -> None:
-    """extend-select augments the injected default; it does not own it.
+    """extend-select augments the combined baseline; it does not own it.
 
     A repo that only sets extend-select (e.g. to add RUF059) keeps
-    receiving DEFAULT_RUFF_SELECT and layers its additions on top.
+    receiving Ruff's defaults and DEFAULT_RUFF_SELECT, then layers
+    its additions on top.
     """
     (tmp_path / "ruff.toml").write_text('[lint]\nextend-select = ["RUF059"]\n')
     assert _consumer_selects_ruff_rules(tmp_path) is False
