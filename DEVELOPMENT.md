@@ -108,7 +108,7 @@ To bump the pins:
 ```bash
 bin/repo-shared upgrade-tools             # bump every pin to PyPI's latest
 bin/repo-shared upgrade-tools --only ruff # bump just one
-bin/repo-shared upgrade-tools --push      # bump + commit + push on green
+bin/repo-shared upgrade-tools --push      # bump + commit; test + push on green
 ```
 
 `upgrade-tools` queries PyPI for each `==`-pinned dep, then does the bump work
@@ -118,12 +118,14 @@ set, so the same set of target versions deterministically lands on the same
 branch -- a re-run after a red test resumes the existing worktree instead of
 rebuilding. The worktree branch is `repo-shared/tool-bump-<hash>` off
 `origin/<default>`, applies all available bumps to `pyproject.toml`, runs
-`uv lock`, runs the dogfood subset (`uv run --extra test pytest shared/tests`),
-and commits in the worktree if green. On a red test run the worktree is left in
-place so the maintainer can `cd` in and debug. With `--push`, the bump branch
-ff-merges into the maintainer's default branch and pushes; `--keep-worktree`
-retains the worktree after push. `git push --dry-run` runs before any bump work
-so an upstream rejection fails fast.
+`uv lock`, commits the bump, and runs the dogfood subset
+(`uv run --locked --extra test pytest shared/tests`). The locked run refuses to
+update `uv.lock`, so the committed candidate is exactly what dogfood tests. On
+a red test run the clean, committed worktree is left in place so the maintainer
+can `cd` in and debug, and the next run can test it again. With `--push`, only
+a green bump branch ff-merges into the maintainer's default branch and pushes;
+`--keep-worktree` retains the worktree after push. `git push --dry-run` runs
+before any bump work so an upstream rejection fails fast.
 
 The dogfood is scoped to `shared/tests` -- the quality gates that actually
 exercise the bumped ruff / mypy / mdformat against every tracked file -- rather

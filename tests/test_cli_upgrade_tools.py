@@ -10,7 +10,7 @@ lookups via ``monkeypatch`` so the tests don't depend on real network
 state.
 
 The worktree-side dogfood in ``_cmd_upgrade_tools`` runs
-``uv run --extra test pytest shared/tests`` -- the quality-gate
+``uv run --locked --extra test pytest shared/tests`` -- the quality-gate
 subset, which ``test_code_quality`` parametrizes per tracked ``.py``
 file. The fixture trims the clone's ``tests/`` to a single smoke test
 so that per-file sweep stays small and the nested dogfood runs fast;
@@ -419,7 +419,7 @@ def test_upgrade_tools_exits_clean_when_every_bump_conflicts(
     assert branch_check.returncode != 0, "bump branch should be deleted"
 
 
-def test_upgrade_tools_dogfood_failure_leaves_worktree(
+def test_upgrade_tools_dogfood_failure_leaves_resumable_worktree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -449,12 +449,33 @@ def test_upgrade_tools_dogfood_failure_leaves_worktree(
     # The bumped pyproject got written before the dogfood ran.
     bumped_pyproject = (wt_path / "pyproject.toml").read_text()
     assert f'"ruff=={current_ruff}"' in bumped_pyproject
-    # No commit lands when the dogfood fails -- the bumped file is
-    # uncommitted in the worktree for the maintainer to inspect.
+    # The bump is committed before dogfood so the worktree remains
+    # inspectable and resumable after a red run.
     status = subprocess.check_output(
         ["git", "status", "--porcelain"], cwd=wt_path, text=True
     )
-    assert "pyproject.toml" in status
+    assert status == ""
+    subject = subprocess.check_output(
+        ["git", "log", "-1", "--pretty=%s"],
+        cwd=wt_path,
+        text=True,
+    ).strip()
+    assert subject == f"- deps: bump ruff from 0.5.0 to {current_ruff}."
+
+    capsys.readouterr()
+    retry = _run_cli(["upgrade-tools", "--only", "ruff"])
+    assert retry == ExitCode.ERROR
+    captured = capsys.readouterr()
+    assert "resuming existing bump worktree" in captured.out
+    assert "dogfood suite failed" in captured.err
+    assert (
+        subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=wt_path,
+            text=True,
+        )
+        == ""
+    )
 
 
 def test_upgrade_tools_resumes_existing_worktree_on_re_run(
@@ -489,6 +510,52 @@ def test_upgrade_tools_resumes_existing_worktree_on_re_run(
         ["git", "log", "-1", "--pretty=%H"], cwd=wt_path, text=True
     ).strip()
     assert head_after_second == head_after_first
+
+
+def test_upgrade_tools_resume_rejects_stale_lock_without_dirtying_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pinned = dict(
+        cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
+    )
+    current_ruff = pinned["ruff"]
+    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
+    _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
+
+    first = _run_cli(["upgrade-tools", "--only", "ruff"])
+    assert first == ExitCode.SUCCESS
+
+    bumps = [("ruff", "0.5.0", current_ruff)]
+    bump_hash = cli._tool_bump_hash(bumps)
+    wt_path = clone / ".wt" / f"repo-shared-tool-bump-{bump_hash}"
+    pyproject = wt_path / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text().replace(
+            'version = "0.1.0"',
+            'version = "0.1.1"',
+            1,
+        )
+    )
+    _git_in(wt_path, "add", "pyproject.toml")
+    _git_in(wt_path, "commit", "-m", "test: make lock stale")
+    capsys.readouterr()
+
+    retry = _run_cli(["upgrade-tools", "--only", "ruff"])
+    assert retry == ExitCode.ERROR
+    captured = capsys.readouterr()
+    assert "resuming existing bump worktree" in captured.out
+    assert "dogfood suite failed" in captured.err
+    assert (
+        subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=wt_path,
+            text=True,
+        )
+        == ""
+    )
 
 
 def test_upgrade_tools_dirty_worktree_blocks_re_run_without_force_retry(

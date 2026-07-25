@@ -889,31 +889,9 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
     else:
         print(f"resuming existing bump worktree at {wt_path}.")
 
-    print("running dogfood suite against the bumped pins...")
-    # Scope to the quality-gate subset (``shared/tests``) rather than
-    # the full suite. A tool-version bump only changes what ruff /
-    # mypy / mdformat report, and ``shared/tests`` runs them against
-    # every tracked file -- the exact signal a bump needs. The full
-    # suite additionally drives the CLI integration tests, each of
-    # which spawns a nested ``upgrade(-tools)`` that builds a venv and
-    # runs its own dogfood; that nesting is redundant for a tool bump
-    # and slow enough under contention to exhaust the timeout.
-    test_result = sp.run(
-        ["uv", "run", "--extra", "test", "pytest", "shared/tests"],
-        cwd=wt_path,
-        check=False,
-        timeout=sp.LONG_TIMEOUT_SECONDS,
-    )
-    if test_result.returncode != 0:
-        _eprint(
-            f"dogfood suite failed; worktree {wt_path} kept for "
-            "inspection. Fix + commit in the worktree or remove "
-            "it and rerun ``upgrade-tools``."
-        )
-        return ExitCode.ERROR
-
-    # Only commit if there's something to commit; on resume the
-    # bump commit already exists from the prior run.
+    # Commit before testing so a red dogfood run leaves a clean,
+    # inspectable branch that the next invocation can resume. On
+    # resume the bump commit already exists.
     if not _git_is_clean(wt_path):
         message = (
             "\n".join(
@@ -942,9 +920,40 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
             return ExitCode.ERROR
         print(f"committed {len(bumps)} bump(s) in {wt_path}")
 
+    print("running dogfood suite against the bumped pins...")
+    # Scope to the quality-gate subset (``shared/tests``) rather than
+    # the full suite. A tool-version bump only changes what ruff /
+    # mypy / mdformat report, and ``shared/tests`` runs them against
+    # every tracked file -- the exact signal a bump needs. The full
+    # suite additionally drives the CLI integration tests, each of
+    # which spawns a nested ``upgrade(-tools)`` that builds a venv and
+    # runs its own dogfood; that nesting is redundant for a tool bump
+    # and slow enough under contention to exhaust the timeout.
+    test_result = sp.run(
+        [
+            "uv",
+            "run",
+            "--locked",
+            "--extra",
+            "test",
+            "pytest",
+            "shared/tests",
+        ],
+        cwd=wt_path,
+        check=False,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
+    )
+    if test_result.returncode != 0:
+        _eprint(
+            f"dogfood suite failed; worktree {wt_path} kept for "
+            "inspection. Fix and commit in the worktree, or rerun "
+            "``upgrade-tools`` to test the committed bump again."
+        )
+        return ExitCode.ERROR
+
     if not args.push:
         print(
-            f"\nbump staged at {wt_path}; pass --push to ff-merge "
+            f"\nbump committed at {wt_path}; pass --push to ff-merge "
             f"into {default_branch} and push, or merge by hand."
         )
         return ExitCode.SUCCESS
@@ -2015,9 +2024,9 @@ def args_parser() -> argparse.ArgumentParser:
         "--push",
         action="store_true",
         help=(
-            "after a green dogfood run + commit in the worktree, "
-            "ff-merge the bump branch into repo-shared's default "
-            "branch and push to origin. Probes with "
+            "after the committed bump passes dogfood in the worktree, "
+            "ff-merge its branch into repo-shared's default branch "
+            "and push to origin. Probes with "
             "``git push --dry-run`` before doing any bump work "
             "so an upstream rejection fails fast."
         ),
