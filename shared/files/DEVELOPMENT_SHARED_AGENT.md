@@ -209,6 +209,32 @@ landed on `main`, remove the worktree and any branches you created as part of
 the development effort (but don't touch other branches which may belong to
 other users or agents).
 
+Working in a worktree is not the same as *staying* in one. The shell keeps its
+working directory between commands, so a single `cd` -- even buried in a
+compound line whose real purpose was something else, like
+`cd $REPO && git worktree remove ...` -- silently redirects every command that
+follows it, for the rest of the session. The next `git reset --hard` or
+`git commit --amend` then rewrites whatever branch the main checkout happens to
+hold, which is usually `main`.
+
+Two habits prevent it, and both are cheap:
+
+- **Put the shell in the worktree once, and keep it there.** `cd` into
+  `$REPO/.wt/<branch>` at the start and address every other checkout by
+  absolute path from then on -- `git -C <path> ...`,
+  `git worktree remove /abs/path` -- so the shell's own directory never moves.
+  Removing the worktree the shell is standing in is the one move it cannot
+  avoid, since that deletes the directory underneath it and every later command
+  fails until it leaves. Do that step from the main checkout, once the work has
+  landed and nothing is left to rewrite.
+- **Confirm the target before any command that rewrites the current branch.**
+  Before `reset --hard`, `commit --amend`, or `cherry-pick`, run
+  `git rev-parse --abbrev-ref HEAD` and check it names the feature branch. It
+  reads `HEAD` in a detached worktree and the main checkout's own branch there,
+  so it blocks on the paths that need blocking rather than passing quietly. One
+  line, and it is the difference between amending your branch and committing to
+  `main` without approval.
+
 Development scratch -- plans, code-review write-ups, rejected-finding logs, any
 `tmp/` working document -- does NOT go inside the worktree. Write it to the
 main checkout's `$REPO/tmp/`, never `$REPO/.wt/<branch>/tmp/`. The worktree is
@@ -290,6 +316,9 @@ advances by fast-forward.
 
 For mid-stack edits, folds, and reorders:
 
+0. Confirm `git rev-parse --abbrev-ref HEAD` names the feature branch. Step 2
+   resets it, so getting this wrong rewrites whatever branch you are actually
+   on.
 1. Create a local backup branch at the current branch's HEAD, named
    `backup/YYYYMMDD-HHMMSS-<descriptive-name>`.
 2. Reset to the commit that needs to be updated.
