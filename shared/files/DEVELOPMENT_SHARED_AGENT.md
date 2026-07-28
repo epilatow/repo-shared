@@ -33,15 +33,29 @@ apply.
   applicable quality gates and gets a green result before spawning a review
   agent. Never hand broken code to a reviewer and make the reviewer discover
   failures that the required gate would have caught.
+- **The per-commit gate: every commit in a stack, not just the tip.** When the
+  work is more than one commit, run the full suite and the quality gates at
+  each commit in turn, with nothing from later commits present. A stack whose
+  tip is green routinely hides an intermediate that is not: a fix, a rename, or
+  a test update lands one commit later than the change it repairs, and only the
+  tip ever sees both. That intermediate is a real state the world will reach --
+  `git bisect` checks it out, reverting the commit above leaves the tree
+  sitting on it, and a CI job may build any commit of a pushed branch. Running
+  a reduced suite (skipping the slow or browser tests, say) does not discharge
+  this: an intermediate breakage hides precisely where the subset stops
+  looking. Walk the stack in a gate worktree (see below) rather than in the
+  branch's own, which would detach its HEAD.
 - **A green exact-candidate full-suite gate precedes every merge.** The
   implementing agent owns test execution. The pre-review run satisfies this
   gate when review produces no commit changes and the base has not moved. After
   review fixes, run the tests or gates affected by each fix, then run the full
   suite once on the settled candidate before requesting or acting on merge
-  approval. Merge approval never waives this gate. If the base moved, replay
-  the branch onto its current tip and run the full suite on that integrated
-  tree before fast-forwarding the destination branch. Never merge first and
-  test afterward.
+  approval -- and re-run the per-commit gate if any commit below the tip
+  changed, which a review-fix rebuild always does. Merge approval never waives
+  either gate. If the base moved, replay the branch onto its current tip, run
+  the full suite on that integrated tree, and re-run the per-commit gate as
+  well: a replay rewrites every commit it carries over, so none of them has
+  been gated in its new form. Never merge first and test afterward.
 - **Look at file contents, not extensions.** Scripts that have
   `uv run --script` in their shebang are Python scripts, not shell scripts,
   regardless of file extension or lack thereof. Always open the file before
@@ -182,12 +196,18 @@ cycle runs in a `git worktree add` under `$REPO/.wt/`, nested under the repo's
 own checkout. For an agent-created branch-backed worktree, the relative path
 under `.wt/` must exactly match the branch name: branch `<branch>` uses
 `$REPO/.wt/<branch>`. Do not invent a separate worktree-purpose name. Detached
-worktrees have no branch to match and follow their applicable naming rule, such
-as the SHA-based code-review worktrees below. Be sure that .gitignore contains
-.wt/. Once the user has approved the merge and the work has landed on `main`,
-remove the worktree and any branches you created as part of the development
-effort (but don't touch other branches which may belong to other users or
-agents).
+worktrees have no branch to match and follow their applicable naming rule: the
+SHA-based code-review worktrees below, and `$REPO/.wt/gate-<SHA>` for the
+per-commit gate, where `<SHA>` is the tip of the stack being walked. One gate
+worktree serves the whole walk -- check out each commit inside it in turn, so
+the suite's dependencies are installed once rather than per commit -- and it is
+removed when the walk ends, not left for the merge. Keeping it off the
+review-worktree path matters: the review protocol reuses and then deletes
+`code-review-<SHA>`, and would take a gate worktree with it. Be sure that
+.gitignore contains .wt/. Once the user has approved the merge and the work has
+landed on `main`, remove the worktree and any branches you created as part of
+the development effort (but don't touch other branches which may belong to
+other users or agents).
 
 Development scratch -- plans, code-review write-ups, rejected-finding logs, any
 `tmp/` working document -- does NOT go inside the worktree. Write it to the
@@ -280,6 +300,9 @@ For mid-stack edits, folds, and reorders:
    duplicate anything. For pure reorders or folds (no content change), the diff
    should be empty. For edits that change file content, the diff should show
    exactly the intended edit and nothing else.
+6. Re-run the per-commit gate. Every commit from the amended one upward is a
+   new commit with a tree nobody has tested: the diff-check proves the *tip* is
+   what it should be, and says nothing about the states in between.
 
 The same technique applies to reordering commits in a stack: reset to the
 appropriate ancestor, then cherry-pick commits back in the desired order. The
