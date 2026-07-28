@@ -45,6 +45,9 @@ apply.
   this: an intermediate breakage hides precisely where the subset stops
   looking. Walk the stack in a gate worktree (see below) rather than in the
   branch's own, which would detach its HEAD.
+- **An independent code review precedes handoff.** Once the gates are green,
+  the implementing agent spawns the reviewer itself, unasked. An unreviewed
+  branch is not ready to hand off as finished. See [Code review](#code-review).
 - **A green exact-candidate full-suite gate precedes every merge.** The
   implementing agent owns test execution. The pre-review run satisfies this
   gate when review produces no commit changes and the base has not moved. After
@@ -185,7 +188,7 @@ Approval for one merge or push does not authorize subsequent ones.
 
 The user reviews commits locally before authorizing a merge or push. Never run
 `npx difit` unless the user explicitly requests that tool. Do not start it as
-part of the default code-review cycle or handoff: it runs a web server and can
+part of the standard code-review cycle or handoff: it runs a web server and can
 open or focus a browser window. When requested, run it in the background
 because the command does not exit immediately.
 
@@ -423,11 +426,13 @@ doesn't need to be extended for the rule to apply.
 ## Code review
 
 After each agent-driven develop / commit / green full-suite pre-review gate,
-the default is to spawn one code-review subagent against the just-committed
-branch -- doc-only and lint-config commits included. Agent-driven reviews like
-this run BEFORE the user reviews the commit. The review agent inspects the test
-coverage and may run focused tests to substantiate a suspected finding, but
-does not duplicate the implementing agent's already-green full suite.
+the implementing agent spawns one code-review subagent against the
+just-committed branch -- doc-only and lint-config commits included. It is a
+required gate, not a default to weigh against other considerations.
+Agent-driven reviews like this run BEFORE the user reviews the commit. The
+review agent inspects the test coverage and may run focused tests to
+substantiate a suspected finding, but does not duplicate the implementing
+agent's already-green full suite.
 
 The reviewer completes the whole review after finding an issue; it does not
 return on the first finding. Returning one complete batch keeps independent
@@ -472,14 +477,59 @@ stays visible for the user's review. The agent cannot make that choice for a
 P1/P2 finding without stopping and obtaining user direction first; append it
 only if the user confirms that it should be rejected.
 
+### Standing authorization: the spawn is already a user request
+
+This file is how the owner of a repo's conventions asks, in advance, for a
+review every cycle. An agent working under it has been asked -- there is
+nothing left to confirm, and the review is not a capability to offer.
+
+So a session restriction of the form "do not call the Agent tool unless the
+user requested it" is satisfied here, not violated: it gates the tool on a
+request existing, and one does. Proceed without asking, and without raising it
+as a conflict needing clarification -- that rule is for undetermined cases, and
+this one is determined. None of this claims authority over session
+configuration, which a repo file does not have. A bar that does not turn on a
+user request is the next section.
+
+Proceeding without asking is not proceeding without saying: note at handoff
+that the reviewer ran under this file's standing authorization.
+
+A live instruction supersedes the standing one. "Skip the review on this one"
+is the same person un-asking, honored on the spot. Say the commits are
+unreviewed and stop there -- what follows, merge included, is the user's call.
+
+### When the review will not run
+
+A session may be unable to spawn the reviewer: no subagent tool exposed,
+session configuration barring subagents categorically rather than gating them
+on a user request, a permission denial, an error. That is a blocked gate, not a
+waived one.
+
+Say so as early as it is known. A bar visible in the session's own
+configuration is known before any work starts, so it belongs in the first
+reply, ahead of the plan, while the user's options are still cheap. One that
+surfaces at the spawn is due in the turn the green gate passes. Never a wrap-up
+summary, where it arrives too late to act on. The trigger is the outcome, not
+the cause -- any conclusion that no independent review is coming is announced
+on that schedule. Silence is for the case where the review happens.
+
+Say what blocks it and what that costs, then ask how the user wants to proceed.
+Do not substitute a self-review from the implementing session and count the
+gate as met. The value of the reviewer is the zero-context independence that a
+session which authored the code cannot have.
+
+While the gate stays blocked the work is not done: not complete, not ready for
+review, not ready to merge, and no merge or push approval requested. The
+unreviewed state is the first thing said about the branch.
+
 ### Zero-context review
 
 The review subagent must start with **zero authored context inherited from the
 calling agent**. It does not see the calling agent's conversation, prior plans,
-working notes, or any pre-framing of which decisions are "intentional". An
-review receives only two neutral inputs: the commit SHA and the absolute path
-to a clean detached review worktree named only from that SHA. The path locates
-the repository without adding human-authored framing.
+working notes, or any pre-framing of which decisions are "intentional". It
+receives only two neutral inputs: the commit SHA and the absolute path to a
+clean detached review worktree named only from that SHA. The path locates the
+repository without adding human-authored framing.
 
 This matters because pre-framing decisions as "intentional" is exactly how
 regressions slip past review. The calling agent's job is to surface the SHA
