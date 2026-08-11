@@ -58,7 +58,10 @@ apply.
   either gate. If the base moved, replay the branch onto its current tip, run
   the full suite on that integrated tree, and re-run the per-commit gate as
   well: a replay rewrites every commit it carries over, so none of them has
-  been gated in its new form. Never merge first and test afterward.
+  been gated in its new form. These are test gates only: rewritten commit SHAs
+  do not by themselves invalidate completed reviews. See
+  [Code review](#code-review) for the separate re-review triggers. Never merge
+  first and test afterward.
 - **Look at file contents, not extensions.** Scripts that have
   `uv run --script` in their shebang are Python scripts, not shell scripts,
   regardless of file extension or lack thereof. Always open the file before
@@ -470,11 +473,23 @@ review from turning into a serial search where every amend starts another
 full-repo pass.
 
 After the review returns, address each finding directly in the commit (amend)
-and run the tests or gates affected by the fixes. A fresh full re-review is
-required when the fixes materially change runtime behavior or address a P1/P2
-finding. It is a full zero-context review of the amended commit, using the same
-protocol and prompt as the initial review. Like the initial review, it does not
-rerun the full suite.
+and run the tests or gates affected by the fixes.
+
+The SHA is only a locator for a stable, committed review snapshot; changing it
+does not itself invalidate the review. Review follows the substantive change,
+not the commit object's identity. Once a review reports no P1/P2 findings and
+its other comments are addressed, consider that review complete. Do not repeat
+it merely because a commit message was edited, the commit was replayed onto a
+moved base without substantive conflict-resolution changes, or a lower commit
+in the stack was rewritten and therefore changed its descendants' SHAs. The
+replay and exact-candidate test gates still apply independently; rerunning them
+does not imply a new review.
+
+A fresh full re-review is required when post-review fixes materially change
+code or runtime behavior, including conflict resolution that requires logic
+changes, or address a P1/P2 finding. It is a full zero-context review of the
+amended commit, using the same protocol and prompt as the initial review. Like
+the initial review, it does not rerun the full suite.
 
 Continue the fix, full-suite, and full-review cycle while a review reports an
 actionable P1/P2 finding. Batch every review's findings; do not amend after the
