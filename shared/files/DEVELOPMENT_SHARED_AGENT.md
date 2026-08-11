@@ -45,6 +45,14 @@ apply.
   this: an intermediate breakage hides precisely where the subset stops
   looking. Walk the stack in a gate worktree (see below) rather than in the
   branch's own, which would detach its HEAD.
+- **Evaluate large commits before review.** After development and the green
+  pre-review gate, pause before spawning the reviewer and ask whether a large
+  commit combines logically separable changes. Smaller cohesive commits can
+  shorten review cycles and keep fixes for one concern from introducing issues
+  in another. Split only when each result is complete, independently
+  understandable, and testable; keep tightly coupled implementation, tests, and
+  documentation together. If a split changes the stack, rerun the full
+  per-commit gate before review.
 - **An independent code review precedes handoff.** Once the gates are green,
   the implementing agent spawns the reviewer itself, unasked. An unreviewed
   branch is not ready to hand off as finished. See [Code review](#code-review).
