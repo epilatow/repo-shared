@@ -30,6 +30,11 @@ What lands in your repo:
 - `CLAUDE.md` -- Claude Code entrypoint that loads the development guidance.
 - `AGENTS.md` -- Codex entrypoint that requires the same development guidance
   to be read before work begins.
+- `opencode.json` -- opencode config whose `instructions` array injects the
+  development guidance files into the agent's system context at session start,
+  so the agent never has to opt into reading them. A consumer that already has
+  its own `opencode.json` should add it to `.repo-shared-ignore` and merge the
+  `instructions` entries by hand.
 - `DEVELOPMENT_SHARED.md` -- cross-repo conventions for humans + agents (file
   shebangs, ASCII-only rule, comment style, Python conventions, markdown style,
   doc-sync rule, commit-message hygiene).
