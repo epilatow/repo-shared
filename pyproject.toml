@@ -17,7 +17,7 @@ dependencies = [
     "mdformat-gfm==1.0.0",
     "mdformat-tables==1.0.0",
     "ruff==0.16.3",
-    "mypy==2.3.0",
+    "mypy==2.3.1",
     # tomlkit for round-trip-preserving pyproject edits in
     # ``_ensure_repo_shared_dep`` -- injects the ``testpaths``
     # entry so pytest finds shared tests at their vendored path
