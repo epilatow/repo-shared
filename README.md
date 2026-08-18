@@ -35,12 +35,8 @@ What lands in your repo:
   so the agent never has to opt into reading them. A consumer that already has
   its own `opencode.json` should add it to `.repo-shared-ignore` and merge the
   `instructions` entries by hand.
-- `DEVELOPMENT_SHARED.md` -- cross-repo conventions for humans + agents (file
-  shebangs, ASCII-only rule, comment style, Python conventions, markdown style,
-  doc-sync rule, commit-message hygiene).
-- `DEVELOPMENT_SHARED_AGENT.md` -- agent-specific conventions layered on top
-  (plan-first protocol, SCM rules, commit-message hygiene, code-review
-  protocol).
+- `DEVELOPMENT_SHARED.md` -- cross-repo conventions for humans + agents.
+- `DEVELOPMENT_SHARED_AGENT.md` -- agent-specific conventions layered on top.
 - `DEVELOPMENT.md` and `DEVELOPMENT_AGENT.md` -- per-repo placeholder templates
   that pair with the `_SHARED` files above. Replace either symlink with a real
   file when you accumulate repo-specific conventions worth writing down.
