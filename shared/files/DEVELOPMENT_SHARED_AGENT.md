@@ -551,6 +551,53 @@ exhaustive. They're samples of patterns to recognise, not authoritative
 enumerations -- when a similar-but-not-included entry shows up, the list
 doesn't need to be extended for the rule to apply.
 
+## Supervising a subagent
+
+This covers every subagent an agent spawns -- a reviewer, a research or
+implementation job, another model driven through its own CLI -- and every
+parent, interactive or not. An attended parent owes its subagents the same
+supervision: a wedged one is discovered exactly as late either way, because in
+neither case was anyone watching it.
+
+Every spawned subagent needs a deadline the controller enforces and a way to
+end it: a cancellation handle where the parent holds one, or the PID and
+process group where the subagent runs as an external process. Pick the deadline
+when the subagent starts, from what the task plausibly takes, and record it
+beside the handle -- one reconstructed afterwards is a rationalization, and a
+deadline written only in the prompt is not enforcement at all. A `running`
+status is not completion.
+
+**Poll the subagent at least every five minutes**, unless the spawn is one that
+blocks the parent -- covered below. A completion signal fires only when the
+subagent completes, so one that wedges never emits it and the parent waits on
+an event that is not coming. The poll is what turns the deadline from a number
+into something enforced: without it, nothing looks at the clock.
+
+Run the poll off something that outlives the spawn and fires whether or not the
+parent remembers: a scheduled wake-up where the harness offers one, otherwise a
+watchdog holding the subagent's handle. A sleep chained onto the spawning
+command is neither, and an intention to check back is less. Where the spawn
+blocks the parent there is no turn in which to poll, and the controller's
+timeout on that call is the whole of the supervision, so it has to actually
+exist. A subagent that can neither be watched nor stopped -- no poll and no
+timeout, or nothing to end it with -- does not get started; report that as a
+blocked gate.
+
+Cancellation is triggered by the deadline, never by a quiet poll. A subagent
+routinely surfaces nothing between spawn and answer: no intermediate step, no
+partial output. Silence is therefore not evidence of a hang, and killing on it
+would trade a rare wedge for the routine destruction of healthy work. Where a
+subagent does report progress, a stall is worth mentioning rather than acting
+on.
+
+End a subagent that passes its deadline, through the handle recorded for it.
+One the poll finds already dead, having never signalled completion, needs no
+ending but gets the same treatment otherwise. Either way, leave its worktree
+untouched for inspection and say so promptly -- a gate it was holding is
+blocked, and [When the review will not run](#when-the-review-will-not-run) sets
+the schedule for announcing that. A review counts only once its explicit
+response has been saved under [Protocol](#protocol).
+
 ## Code review
 
 After each agent-driven develop / commit / green full-suite pre-review gate,
@@ -649,19 +696,13 @@ review subagent as well as development jobs, and does not move review ownership
 away from the implementing agent. If neither condition can be guaranteed, do
 not launch the child; report its gate as blocked.
 
-Every unattended child also needs a controller-enforced deadline and a recorded
-cancellation handle; for an external process, record its PID / process group. A
-deadline written only in the prompt is not enforcement, and a `running` status
-is not completion. A review counts only when its explicit response has been
-saved under the normal protocol below. If the child cannot complete, cancel it
-through that handle, preserve the worktree, and report the gate as blocked.
-
 ### When the review will not run
 
-A session may be unable to spawn the reviewer: no subagent tool exposed,
-session configuration barring subagents categorically rather than gating them
-on a user request, a permission denial, an error. That is a blocked gate, not a
-waived one.
+A session may be unable to spawn the reviewer, or barred from doing so: no
+subagent tool exposed, session configuration barring subagents categorically
+rather than gating them on a user request, a permission denial, an error, or no
+way to bound the subagent's run once it starts -- neither a poll nor a
+controller timeout. Any of them is a blocked gate, not a waived one.
 
 Say so as early as it is known. A bar visible in the session's own
 configuration is known before any work starts, so it belongs in the first
@@ -702,7 +743,9 @@ neutrally; the review agent's job is to evaluate independently.
 2. Spawn the review subagent with the prompt below, substituting `<SHA>` and
    `<REPO>` with the commit SHA and detached review-worktree path. Hand the
    agent nothing else -- no extra framing, no "we already decided X", no hints
-   about which findings would be welcome.
+   about which findings would be welcome. Supervise it from there per
+   [Supervising a subagent](#supervising-a-subagent); a review that wedges is
+   the case that section exists for.
 3. Save the initial review to `$REPO/tmp/<slug>-code-review.md`. Save every
    later review with the next unused numeric suffix, such as
    `$REPO/tmp/<slug>-code-review-2.md` and `$REPO/tmp/<slug>-code-review-3.md`,
