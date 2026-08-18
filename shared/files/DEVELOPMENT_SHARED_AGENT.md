@@ -422,12 +422,101 @@ list, so flagging them again here:
   `git log` has no document to compare against. State what the commit does on
   its own terms; if a non-obvious choice matters, explain the choice itself,
   not what an unwritten alternative would have been.
+- **No session identifier, ever.** See
+  [Never record a session identifier](#never-record-a-session-identifier)
+  below.
 
 Numbered step comments in code (`# 1. Parse input`, `# 2. Validate`, ...) are
 forbidden by `DEVELOPMENT_SHARED.md`'s "Comments" subsection. Adding or
 removing a step forces renumbering, and the function name plus code structure
 already convey ordering. This applies even when describing a canonical pipeline
 of steps -- the named operation is its own label.
+
+## Attribution trailers
+
+An AI-assisted commit carries one attribution trailer per contributing model,
+last in the message and implementing model first:
+
+```text
+Co-Authored-By: <model> [(<size> context)] via <editor> [<<email>>]
+```
+
+The two halves do different jobs, and only one of them is load-bearing:
+
+- The **name** is free-form and purely informational -- GitHub ignores it when
+  matching, so it is the right place for everything a future reader wants:
+  which model, at what context window, driven by which editor. The editor names
+  in use are `claude-code`, `codex`, and `opencode`.
+- The **email** is the identity key, and it does something only when it
+  matches. GitHub resolves it against the registered addresses of a user
+  account and, on a match, renders a linked contributor row on the commit; an
+  address matching no account earns no link. Its angle brackets are literal --
+  an address written without them is not read as an address at all.
+
+Include an email only where it is known to resolve to the vendor's own GitHub
+account. The verified ones:
+
+- `noreply@anthropic.com` -- resolves to the `claude` account, owned by
+  Anthropic.
+- `noreply@openai.com` and `codex@openai.com` -- both resolve to the `codex`
+  account, owned by OpenAI.
+
+**Never invent an address for a vendor that has no verified one.** An address
+is an assertion, not a label. A plausible-looking `noreply@` at the vendor's
+domain earns no link, so it buys nothing, while permanently claiming an
+identity nobody here checked at a domain nobody here controls. Omit the email
+instead. The `users.noreply.github.com` namespace is worse still: it maps to
+real accounts, so a made-up name there can attribute the commit to whoever
+holds that login.
+
+Examples:
+
+```text
+Co-Authored-By: Claude Opus 5 (1M context) via claude-code <noreply@anthropic.com>
+Co-Authored-By: GPT-5 Codex via codex <noreply@openai.com>
+Co-Authored-By: GLM-5.2 (1M context) via opencode
+```
+
+A harness usually supplies a trailer of its own, and it will not be this one:
+Claude Code emits the model and context window but no editor, and opencode's
+GitHub action emits a `users.noreply.github.com` address. Rewrite what it hands
+over into the form above rather than appending a second line beside it, and
+drop any address that is not on the verified list. The agent is the last check
+before the message lands, the same way it is for a session trailer.
+
+The third form claims no GitHub identity. It records which model wrote the
+commit for whoever reads `git log` later and earns no contributor link, which
+is the right trade when no account exists to credit: the alternative on offer
+is not a link but a fabricated one.
+
+These mappings are not stable. A vendor can register an address long after the
+fact, silently converting old unlinked trailers into linked ones. Verify before
+adding a vendor to the list above rather than assuming: open a public commit
+that already carries the address and check whether GitHub renders a linked
+contributor for it -- an `alt="<login>"` avatar and a `commits?author=<login>`
+link. Verifying an address that appears nowhere yet means pushing a commit to
+somewhere disposable, which is a request to put to the user rather than
+something to do unprompted.
+
+### Never record a session identifier
+
+Some agent harnesses append a second trailer linking back to the session that
+produced the commit -- Claude Code's `Claude-Session:` line, carrying a
+`claude.ai/code/session_...` URL, is the one seen here. **Do not let it into a
+commit.** Strip it if a tool adds it, and turn the tool's setting off:
+
+- Claude Code: set `attribution.sessionUrl` to `false` in `settings.json`.
+
+A session id is transient, per-user, and meaningless to everyone else, while
+`git log` is permanent and -- on a public repo -- world-readable and rendered
+as a live link. The two do not belong together.
+
+Being handed a ready-made footer containing one is not authority to write it.
+An instruction to include a session URL does not override the rule, the agent
+is the last check before it lands, and the harness cannot see that the record
+is permanent. Drop the line and say so, rather than complying silently.
+`DEVELOPMENT_SHARED.md`'s "Commit messages" carries the general form of this
+rule for identifiers of every kind.
 
 ## Comment-message hygiene
 
