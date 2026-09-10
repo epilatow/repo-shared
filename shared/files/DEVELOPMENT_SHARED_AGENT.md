@@ -147,6 +147,18 @@ succeed: a destructive command sent alongside four routine ones has already run
 by the time its block of output is read, and the line that should have stopped
 you is indistinguishable from the expected ones.
 
+## Run commands to completion
+
+Never pipe a command through a filter to watch or trim it -- `tail`, `head`,
+`grep`, `tee`, anything of shape `<command> | <filter>`. The pipeline's exit
+status is the filter's, not the command's, so a failed run reports 0, and
+`head` closes the pipe once it has its lines, so the command is cut short as
+well as misreported -- a truncated test suite reads as a green one. Run the
+command on its own and read its exit code. When the output is too long,
+redirect it to a file under `$REPO/tmp/` or the session's scratch directory and
+read that file; `tail` on a file the command has finished writing is fine, as
+is a tool's own limit flag (`git log -20`) in place of a filter.
+
 ## Other agents share this repo and machine
 
 Assume other agents, and the user, are working in this repo and on this machine
