@@ -552,13 +552,10 @@ rule for identifiers of every kind.
 
 ## Comment-message hygiene
 
-A code comment is read by someone looking at the *current* version of the file.
-It must describe what is there now -- not what was there before, what was
-deleted, what got renamed, or what got lifted into a helper. The canonical rule
-lives in `DEVELOPMENT_SHARED.md`'s "Comments" subsection; the agent-specific
-failure mode is repeating the commit-message rationale inside the source.
-
-Concretely, never write comments like:
+`DEVELOPMENT_SHARED.md`'s "Comments" subsection is the canonical rule: a
+comment describes the current code, never what was there before. The
+agent-specific failure mode is repeating the commit-message rationale inside
+the source. Concretely, never write comments like:
 
 - `# The legacy _FooBar shim is gone -- now uses helpers.foo.`
 - `# Wrappers have all been deleted; the dispatcher derives this directly.`
@@ -566,22 +563,18 @@ Concretely, never write comments like:
 - `# Replaced the per-call-site try / except with the shared guard.`
 - `# Per the plan, this lives in helpers_runtime instead of helpers_lifecycle.`
 
-The diff and commit message capture migrations. The comment captures the
-*current* code only -- describe what the function does now and the constraint
-it enforces. If the comment cannot be written without referencing something
-that no longer exists, the comment isn't earning its keep; delete it.
-
 The same applies to docstrings ("formerly known as `_FooBar`", "ported from the
 legacy framework"), CHANGELOG-style banners at the top of files, and
 `# TODO: remove once X` markers that name something already removed. If a
 comment's content reads like a footnote on the diff, it belongs in the commit
-message, not the file.
+message, not the file; if it cannot be written without naming something that no
+longer exists, delete it.
 
 Example lists in this file (the bullets above, the "do NOT include" list under
-Commit-message hygiene in `DEVELOPMENT_SHARED.md`) are illustrative, not
-exhaustive. They're samples of patterns to recognise, not authoritative
-enumerations -- when a similar-but-not-included entry shows up, the list
-doesn't need to be extended for the rule to apply.
+"Commit messages" in `DEVELOPMENT_SHARED.md`) are illustrative, not exhaustive.
+They're samples of patterns to recognise, not authoritative enumerations --
+when a similar-but-not-included entry shows up, the list doesn't need to be
+extended for the rule to apply.
 
 ## Supervising a subagent
 
