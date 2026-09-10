@@ -152,9 +152,19 @@ you is indistinguishable from the expected ones.
 Assume other agents, and the user, are working in this repo and on this machine
 at the same time. Their branches, worktrees, scratch files, and processes look
 like leftovers from inside your session, and are not. Never delete or rewrite a
-branch, worktree, or untracked file you did not create, and never kill a
-process that is not yours (see [Process management](#process-management)). When
-something that looks abandoned is in your way, ask.
+branch, worktree, or untracked file you did not create (see
+[Delete from a list, never from a pattern]), and never kill a process that is
+not yours (see [Process management](#process-management)). When something that
+looks abandoned is in your way, ask.
+
+## Delete from a list, never from a pattern
+
+Never delete by glob, pattern, or sweep -- `rm -rf .wt/*`, `find tmp -delete`,
+`git clean -fdx`, `git stash clear`, any pipeline of shape
+`<pattern-query> | <delete>`. Each takes whatever is there when it runs,
+including what another agent put there since you last looked. Build the list of
+targets first (`ls`, `git branch --list`, `git worktree list`), read it, and
+delete exactly those entries by name.
 
 ## Process management
 
@@ -922,6 +932,7 @@ rejection), surface that as an explicit suggestion to the user with the
 proposed scope, rather than self-rejecting. The user decides whether to fold it
 in or defer.
 
+[delete from a list, never from a pattern]: #delete-from-a-list-never-from-a-pattern
 [finish the work everywhere it applies]: #finish-the-work-everywhere-it-applies
 [other agents share this repo and machine]: #other-agents-share-this-repo-and-machine
 [re-review rule]: #re-review-is-triggered-by-the-fix-not-the-finding
