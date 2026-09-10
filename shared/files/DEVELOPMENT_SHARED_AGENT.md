@@ -922,22 +922,16 @@ direction. Examples of *valid* rejections:
 The following rationales are NEVER valid for rejecting a finding -- they are
 rationalizations for shipping a half-job:
 
-- "The existing X is already incomplete / stale / broken, so fixing only the
-  new piece would be inconsistent and a thorough sweep is out of scope." Past
-  staleness is never a license for new staleness. If the change touched the
-  stale surface (added entries to a list, modified a classification, edited a
-  section), do the full work to leave it correct, including the pre-existing
-  gaps the diff exposed.
+- "The existing X was already stale" and "doing it thoroughly is out of scope".
+  [Finish the work everywhere it applies] already rules these out: if the diff
+  touched the surface, the agent owns leaving it correct, pre-existing gaps
+  included.
 - "It's only nice-to-have / P3, so it's optional." The P-tag indicates
   ship-blocking severity, not whether to do the work. P3 findings local to the
   diff still get fixed.
 - "Adding it would be defensive against an unrelated future regression." If the
   surface is in the diff's blast radius, the agent owns making it correct now,
   not punting it to a hypothetical future agent.
-- "Doing it thoroughly is out of scope." If the work is in the diff's blast
-  radius, scope expanded the moment the diff touched the surface. Either do the
-  full work or be specific about *which sub-task* is genuinely separable and
-  offer a follow-up.
 
 If a finding genuinely belongs in a separate follow-up commit (not just a
 rejection), surface that as an explicit suggestion to the user with the
