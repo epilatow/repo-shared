@@ -594,44 +594,47 @@ parent, interactive or not. An attended parent owes its subagents the same
 supervision: a wedged one is discovered exactly as late either way, because in
 neither case was anyone watching it.
 
-Every spawned subagent needs a deadline the controller enforces and a way to
-end it: a cancellation handle where the parent holds one, or the PID and
-process group where the subagent runs as an external process. Pick the deadline
-when the subagent starts, from what the task plausibly takes, and record it
-beside the handle -- one reconstructed afterwards is a rationalization, and a
-deadline written only in the prompt is not enforcement at all. A `running`
-status is not completion.
+Every spawned subagent needs a way to watch it and a way to end it: a
+cancellation handle where the parent holds one, or the PID and process group
+where the subagent runs as an external process. Record the handle at spawn
+time. A `running` status is not completion.
 
-**Poll the subagent at least every five minutes**, unless the spawn is one that
-blocks the parent -- covered below. A completion signal fires only when the
-subagent completes, so one that wedges never emits it and the parent waits on
-an event that is not coming. The poll is what turns the deadline from a number
-into something enforced: without it, nothing looks at the clock.
+Do not put a timeout on the run. How long a subagent takes is not predictable
+from its task, and a deadline picked at spawn time ends a healthy subagent
+partway through and loses everything it did. Supervise by watching instead:
+**check on the subagent at least every five minutes** and decide from what you
+see whether it has finished, is still working, has died, or is stuck. A
+completion signal fires only when the subagent completes, so one that wedges
+never emits it and the parent waits on an event that is not coming; the check
+is what catches that.
 
-Run the poll off something that outlives the spawn and fires whether or not the
-parent remembers: a scheduled wake-up where the harness offers one, otherwise a
-watchdog holding the subagent's handle. A sleep chained onto the spawning
-command is neither, and an intention to check back is less. Where the spawn
-blocks the parent there is no turn in which to poll, and the controller's
-timeout on that call is the whole of the supervision, so it has to actually
-exist. A subagent that can neither be watched nor stopped -- no poll and no
-timeout, or nothing to end it with -- does not get started; report that as a
-blocked gate.
+Run the check off something that outlives the spawn and fires whether or not
+the parent remembers: a scheduled wake-up where the harness offers one,
+otherwise a watchdog holding the subagent's handle. A sleep chained onto the
+spawning command is neither, and an intention to check back is less. Never
+spawn a subagent through a call that blocks the parent: a blocked parent has no
+turn in which to check, and a timeout on the blocking call is the deadline this
+section rules out. A subagent that cannot be both watched and stopped does not
+get started; report that as a blocked gate.
 
-Cancellation is triggered by the deadline, never by a quiet poll. A subagent
-routinely surfaces nothing between spawn and answer: no intermediate step, no
-partial output. Silence is therefore not evidence of a hang, and killing on it
-would trade a rare wedge for the routine destruction of healthy work. Where a
-subagent does report progress, a stall is worth mentioning rather than acting
-on.
+Silence is not evidence of a hang. A subagent routinely surfaces nothing
+between spawn and answer: no intermediate step, no partial output. Ending one
+on a quiet check would trade a rare wedge for the routine destruction of
+healthy work. Dead is a subagent that has exited without signalling completion.
+Stuck is evidence from the subagent itself -- output that stopped growing, a
+transcript sitting on the same tool call, a process idle across checks -- and
+it has to hold across more than one check before it counts. Where a subagent
+does report progress, a stall is worth mentioning before acting on. A run that
+offers nothing to read at all -- no output, transcript, or process to observe
+-- across several checks is neither working nor stuck on the evidence: say so
+and ask the user how to proceed rather than end it or wait in silence.
 
-End a subagent that passes its deadline, through the handle recorded for it.
-One the poll finds already dead, having never signalled completion, needs no
-ending but gets the same treatment otherwise. Either way, leave its worktree
-untouched for inspection and say so promptly -- a gate it was holding is
-blocked, and [When the review will not run](#when-the-review-will-not-run) sets
-the schedule for announcing that. A review counts only once its explicit
-response has been saved under [Protocol](#protocol).
+End a stuck subagent, and only on that evidence, through the handle recorded
+for it. Dead or ended, leave its worktree untouched for inspection and say so
+promptly -- a gate it was holding is blocked, and
+[When the review will not run](#when-the-review-will-not-run) sets the schedule
+for announcing that. A review counts only once its explicit response has been
+saved under [Protocol](#protocol).
 
 ## Code review
 
@@ -765,8 +768,8 @@ not launch the child; report its gate as blocked.
 A session may be unable to spawn the reviewer, or barred from doing so: no
 subagent tool exposed, session configuration barring subagents categorically
 rather than gating them on a user request, a permission denial, an error, or no
-way to bound the subagent's run once it starts -- neither a poll nor a
-controller timeout. Any of them is a blocked gate, not a waived one.
+way to watch or end the subagent once it starts. Any of them is a blocked gate,
+not a waived one.
 
 Say so as early as it is known. A bar visible in the session's own
 configuration is known before any work starts, so it belongs in the first
