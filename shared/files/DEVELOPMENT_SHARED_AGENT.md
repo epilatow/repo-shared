@@ -147,6 +147,15 @@ succeed: a destructive command sent alongside four routine ones has already run
 by the time its block of output is read, and the line that should have stopped
 you is indistinguishable from the expected ones.
 
+## Other agents share this repo and machine
+
+Assume other agents, and the user, are working in this repo and on this machine
+at the same time. Their branches, worktrees, scratch files, and processes look
+like leftovers from inside your session, and are not. Never delete or rewrite a
+branch, worktree, or untracked file you did not create, and never kill a
+process that is not yours (see [Process management](#process-management)). When
+something that looks abandoned is in your way, ask.
+
 ## Process management
 
 Spawn background processes in a new process group so the whole subtree carries
@@ -263,12 +272,11 @@ per-commit gate, where `<SHA>` is the tip of the stack being walked. One gate
 worktree serves the whole walk -- check out each commit inside it in turn, so
 the suite's dependencies are installed once rather than per commit -- and it is
 removed when the walk ends, not left for the merge. Keeping it off the
-review-worktree path matters: the review protocol reuses and then deletes
-`code-review-<SHA>`, and would take a gate worktree with it. Be sure that
-.gitignore contains .wt/. Once the user has approved the merge and the work has
-landed on `main`, remove the worktree and any branches you created as part of
-the development effort (but don't touch other branches which may belong to
-other users or agents).
+review-worktree path matters: the review protocol reuses a `code-review-<SHA>`
+this session created and deletes it afterwards, which would take a gate
+worktree with it. Be sure that .gitignore contains .wt/. Once the user has
+approved the merge and the work has landed on `main`, remove the worktree and
+any branches you created as part of the development effort.
 
 **Set the working directory at the start of every command or block of
 commands** -- `cd <abs-path> && <command>`, or `git -C <abs-path>` per command.
@@ -771,8 +779,10 @@ neutrally; the review agent's job is to evaluate independently.
 ### Protocol
 
 1. Create a clean detached review worktree at `$REPO/.wt/code-review-<SHA>`,
-   where `<SHA>` is the full commit SHA. Reuse an existing path only when it is
-   clean, detached, and at that exact commit. Never put a human-authored
+   where `<SHA>` is the full commit SHA. Reuse an existing path only when this
+   session created it and it is clean, detached, and at that exact commit; one
+   another session created is in use (see
+   [Other agents share this repo and machine]). Never put a human-authored
    purpose or branch name in the review worktree path.
 2. Spawn the review subagent with the prompt below, substituting `<SHA>` and
    `<REPO>` with the commit SHA and detached review-worktree path. Hand the
@@ -913,4 +923,5 @@ proposed scope, rather than self-rejecting. The user decides whether to fold it
 in or defer.
 
 [finish the work everywhere it applies]: #finish-the-work-everywhere-it-applies
+[other agents share this repo and machine]: #other-agents-share-this-repo-and-machine
 [re-review rule]: #re-review-is-triggered-by-the-fix-not-the-finding
