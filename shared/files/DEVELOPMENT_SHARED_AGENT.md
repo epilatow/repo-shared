@@ -28,6 +28,20 @@ apply.
   additions, do not run tests or begin a review until those changes are
   committed. Amend that commit with incremental fixes before each retest or
   re-review rather than validating an uncommitted working tree.
+- **Self-review every commit before independent review.** Once the work is
+  committed and before the pre-review gate runs, read each commit as its
+  reviewer will, against the checklist in
+  [the review prompt](#the-review-prompt-verbatim), and fix what you find. In
+  particular, check that every claim in the docs, comments, and commit message
+  matches what the code does; that every instance of the problem is fixed (see
+  [Finish the work everywhere it applies]); and that the change is consistent
+  with the code around it. Ask whether the commit combines logically separable
+  changes; smaller cohesive commits review faster and keep a fix for one
+  concern from disturbing another. Split only when each result is complete,
+  independently understandable, and testable, and keep tightly coupled
+  implementation, tests, and documentation together. The reviewer confirms the
+  analysis; it does not do it for you. Edge cases and code paths a reviewer
+  finds are ones the self-review should have found.
 - **A green implementer-owned full-suite gate precedes review.** After
   committing, the implementing agent runs the repo's full local test suite and
   applicable quality gates and gets a green result before spawning a review
@@ -45,14 +59,6 @@ apply.
   this: an intermediate breakage hides precisely where the subset stops
   looking. Walk the stack in a gate worktree (see below) rather than in the
   branch's own, which would detach its HEAD.
-- **Evaluate large commits before review.** After development and the green
-  pre-review gate, pause before spawning the reviewer and ask whether a large
-  commit combines logically separable changes. Smaller cohesive commits can
-  shorten review cycles and keep fixes for one concern from introducing issues
-  in another. Split only when each result is complete, independently
-  understandable, and testable; keep tightly coupled implementation, tests, and
-  documentation together. If a split changes the stack, rerun the full
-  per-commit gate before review.
 - **An independent code review precedes handoff.** Once the gates are green,
   the implementing agent spawns the reviewer itself, unasked. An unreviewed
   branch is not ready to hand off as finished. See [Code review](#code-review).
@@ -599,9 +605,9 @@ response has been saved under [Protocol](#protocol).
 
 ## Code review
 
-After each agent-driven develop / commit / green full-suite pre-review gate,
-the implementing agent spawns one code-review subagent against the
-just-committed branch -- doc-only and lint-config commits included. It is a
+After each agent-driven develop / commit / self-review / green full-suite
+pre-review gate, the implementing agent spawns one code-review subagent against
+the just-committed branch -- doc-only and lint-config commits included. It is a
 required gate, not a default to weigh against other considerations.
 Agent-driven reviews like this run BEFORE the user reviews the commit. The
 review agent inspects the test coverage and may run focused tests to
@@ -629,6 +635,12 @@ same issue recurs, a fix requires new authority, or repeated cycles otherwise
 fail to converge. Resume only after the user provides direction. Do not leave a
 known actionable P1/P2 finding unresolved merely because a particular number of
 review cycles has completed.
+
+A P1/P2 finding is also a verdict on the process that produced the commit: the
+analysis or planning stopped short of the case the reviewer found. Before
+fixing it, return to that analysis and look for what else the same gap let
+through -- adjacent code paths, other instances, the edge cases the fix implies
+-- and address those in the same amend, not just the case the reviewer named.
 
 Any change the user requests after agent review counts as user review feedback,
 including small follow-up edits during handoff. Amend the requested change and
@@ -900,4 +912,5 @@ rejection), surface that as an explicit suggestion to the user with the
 proposed scope, rather than self-rejecting. The user decides whether to fold it
 in or defer.
 
+[finish the work everywhere it applies]: #finish-the-work-everywhere-it-applies
 [re-review rule]: #re-review-is-triggered-by-the-fix-not-the-finding
