@@ -421,12 +421,9 @@ branch HEAD is *not* expected to be empty -- it should show exactly what the
 new base introduces plus any conflict resolutions you made, and nothing else.
 Anything more means a commit was dropped, duplicated, or mis-resolved.
 
-To fold a later commit into an earlier one specifically, use the same
-backup-branch + reset + cherry-pick technique. Do **not** use
-`git commit --fixup` + `git rebase -i --autosquash` -- the "review the todo in
-the editor" safety only holds for a human at the terminal, not for an agent
-invocation, and a stale `--fixup=<sha>` can silently land in the wrong commit
-or be dropped.
+To fold a later commit into an earlier one, use the same technique;
+`git commit --fixup` + `git rebase -i --autosquash` is a rebase, and
+[Never use `git rebase`](#never-use-git-rebase) covers it.
 
 ### Renames
 
