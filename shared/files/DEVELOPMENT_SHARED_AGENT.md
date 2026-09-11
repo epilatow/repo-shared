@@ -47,8 +47,8 @@ apply.
   applicable quality gates and gets a green result before spawning a review
   agent. Never hand broken code to a reviewer and make the reviewer discover
   failures that the required gate would have caught.
-- **The per-commit gate: every commit in a stack, not just the tip.** When the
-  work is more than one commit, run the full suite and the quality gates at
+- **The per-commit gate: every new commit in a stack, not just the tip.** When
+  the work is more than one commit, run the full suite and the quality gates at
   each commit in turn, with nothing from later commits present. A stack whose
   tip is green routinely hides an intermediate that is not: a fix, a rename, or
   a test update lands one commit later than the change it repairs, and only the
@@ -58,7 +58,8 @@ apply.
   a reduced suite (skipping the slow or browser tests, say) does not discharge
   this: an intermediate breakage hides precisely where the subset stops
   looking. Walk the stack in a gate worktree (see below) rather than in the
-  branch's own, which would detach its HEAD.
+  branch's own, which would detach its HEAD. For a previously green stack being
+  rewritten, use the rewrite skill's affected-commit gate rule instead.
 - **An independent code review precedes handoff.** Once the gates are green,
   the implementing agent spawns the reviewer itself, unasked. An unreviewed
   branch is not ready to hand off as finished. See [Code review](#code-review).
@@ -67,13 +68,11 @@ apply.
   gate when review produces no commit changes and the base has not moved. After
   review fixes, run the tests or gates affected by each fix, then run the full
   suite once on the settled candidate before requesting or acting on merge
-  approval -- and re-run the per-commit gate if any commit below the tip
-  changed, which a review-fix rebuild always does. Merge approval never waives
-  either gate. If the base moved, replay the branch onto its current tip, run
-  the full suite on that integrated tree, and re-run the per-commit gate as
-  well: a replay rewrites every commit it carries over, so none of them has
-  been gated in its new form. These are test gates only: rewritten commit SHAs
-  do not by themselves invalidate completed reviews. Use the independent-review
+  approval. For a previously green rewrite, gate the changed commits and tip
+  according to the rewrite skill, including a moved-base replay; an unchanged
+  commit does not need another gate solely because its object ID changed. Merge
+  approval waives no gate. These are test gates only: rewritten commit SHAs do
+  not by themselves invalidate completed reviews. Use the independent-review
   skill's finding-disposition reference for re-review triggers. Never merge
   first and test afterward.
 - **Look at file contents, not extensions.** Scripts that have
@@ -334,93 +333,19 @@ commit to exactly what its description calls for. (Programmatic tooling that
 stages a known-clean worktree it fully controls is the exception; this rule is
 about an agent hand-building commits.)
 
-### Working with local commits
+### Local commit-stack rewrites
 
-Changes to existing local (unpushed) commits should generally fold into the
-commit that introduced the affected code, not into new or follow-on commits. If
-you think a change should be a follow-on, ask first.
+Fold changes into the local, unpushed commit that introduced the affected code;
+ask before using a follow-on commit. Never use `git rebase`, create a merge
+commit, or cherry-pick feature commits directly onto `main`.
 
-When editing a commit mid-stack, be very careful not to leak functionality from
-other commits into the commit you're editing. After amending, double-check the
-commit to verify you didn't make this mistake. Mechanisms that help:
-
-- If commits are orthogonal, reorder so the one being edited is at the top of
-  the stack (using the backup-branch + cherry-pick technique below).
-- If commits overlap, check out the commit that needs fixing, amend it with
-  changes, then cherry-pick the other commits on top using the backup-branch
-  technique below.
-- If commits overlap, you can also make changes in new temporary commits that
-  get moved around in the stack and folded into a lower commit (both operations
-  done via the backup-branch + cherry-pick technique below).
-
-### Never use `git rebase`
-
-Not `rebase -i`, not `--autosquash`, not non-interactive `rebase <upstream>` or
-`--onto`, and not any `GIT_SEQUENCE_EDITOR` automation. Reasons:
-
-- The "review the todo in the editor" safety property doesn't hold for an agent
-  invocation.
-- Mid-rebase conflict resolution is a place silent loss happens.
-- Empty commits are dropped by default without warning.
-- The diff-vs-backup-branch safety check loses its teeth: intended
-  conflict-resolution drift can no longer be distinguished from accidental hunk
-  loss.
-
-For folds, reorders, and mid-stack edits, use the backup-branch + cherry-pick +
-amend technique below. To update a feature branch onto a moved base (the case
-`git rebase main` would normally cover), use that same technique -- see its
-moved-base variant below. Never resolve a moved base with a merge commit (see
-below).
-
-### Never use merge commits
-
-Keep history linear -- never create a merge commit. The place this tempts an
-agent is updating a feature branch onto a moved base: do not merge the new base
-into the branch. Rebase it with the backup-branch + cherry-pick technique below
-instead.
-
-The other place it tempts an agent is landing a branch on `main` after `main`
-has advanced past the branch's base. Do not create a merge commit, and do not
-cherry-pick the branch's commits onto `main` directly. Instead rebase the
-branch onto the new `main` tip (same technique), then fast-forward merge the
-whole branch onto `main`. Rebasing happens on the branch; `main` only ever
-advances by fast-forward.
-
-### Backup-branch + cherry-pick technique
-
-For mid-stack edits, folds, and reorders:
-
-0. Confirm `git -C <path> rev-parse --abbrev-ref HEAD` names the feature
-   branch, using the same `<path>` step 2 will reset. Getting this wrong
-   rewrites the wrong branch.
-1. Create a local backup branch at the current branch's HEAD, named
-   `backup/YYYYMMDD-HHMMSS-<descriptive-name>`.
-2. Reset to the commit that needs to be updated.
-3. Make the edits and amend the commit.
-4. Cherry-pick the remaining commits from the backup branch back onto the
-   current branch.
-5. Run `git diff <backup-branch>` to verify the replay didn't silently drop or
-   duplicate anything. For pure reorders or folds (no content change), the diff
-   should be empty. For edits that change file content, the diff should show
-   exactly the intended edit and nothing else.
-6. Re-run the per-commit gate. Every commit from the amended one upward is a
-   new commit with a tree nobody has tested: the diff-check proves the *tip* is
-   what it should be, and says nothing about the states in between.
-
-The same technique applies to reordering commits in a stack: reset to the
-appropriate ancestor, then cherry-pick commits back in the desired order. The
-diff-check still applies (for pure reorders, the diff should be empty).
-
-It also rebases a branch onto a moved base: reset to the new base commit (not
-an ancestor of the branch), then cherry-pick the branch's own commits back on
-top, resolving conflicts as they arise. Here the diff-check against the old
-branch HEAD is *not* expected to be empty -- it should show exactly what the
-new base introduces plus any conflict resolutions you made, and nothing else.
-Anything more means a commit was dropped, duplicated, or mis-resolved.
-
-To fold a later commit into an earlier one, use the same technique;
-`git commit --fixup` + `git rebase -i --autosquash` is a rebase, and
-[Never use `git rebase`](#never-use-git-rebase) covers it.
+Before changing history, verify the exact feature worktree and branch; never
+rewrite `main` or another session's branch. Prove the commits are local or
+obtain user direction. Read and follow the exact repository-local
+`.agents/skills/repo-shared-rewrite-local-commit-stack/SKILL.md` for the
+backup, replay, recovery, and verification procedure. If it is missing or its
+preconditions fail, stop before changing history. A moved-base replay may
+fast-forward to `main` only after separate merge authorization.
 
 ### Renames
 

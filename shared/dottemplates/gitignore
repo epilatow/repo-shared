@@ -29,6 +29,7 @@ Thumbs.db
 !.claude/commands/
 .claude/commands/*
 !.claude/commands/repo-shared-independent-code-review.md
+!.claude/commands/repo-shared-rewrite-local-commit-stack.md
 
 # Git worktrees
 .wt/

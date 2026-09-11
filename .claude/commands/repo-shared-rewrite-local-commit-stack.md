@@ -1,0 +1,1 @@
+../../shared/dotfiles/claude/commands/repo-shared-rewrite-local-commit-stack.md
