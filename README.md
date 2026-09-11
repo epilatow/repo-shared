@@ -26,11 +26,13 @@ gates canonical paths on every test run. To carry your own version of a
 canonical leaf path, list it in `.repo-shared-ignore` -- see
 [Override mechanisms](#override-mechanisms) below.
 
-What lands in your repo:
+### What lands in your repo
 
 - `CLAUDE.md` -- Claude Code entrypoint that loads the development guidance.
 - `AGENTS.md` -- Codex entrypoint that requires the same development guidance
   to be read before work begins.
+- `.agents/skills/<name>/` -- bundled Agent Skills, linked file by file.
+- `.claude/commands/<name>.md` -- thin Claude Code discovery adapters.
 - `opencode.json` -- opencode config whose `instructions` array injects the
   development guidance files into the agent's system context at session start,
   so the agent never has to opt into reading them. A consumer that already has
@@ -45,6 +47,17 @@ What lands in your repo:
   config and custom-rule registration for the linter test below.
 - `.gitignore` -- baseline Python / editor / OS ignores plus the `.wt/`
   worktree dir `upgrade` uses.
+
+### Agent Skills
+
+Portable [Agent Skills](https://agentskills.io/specification) use the existing
+dotfile installer. Claude adapters prefer the repository-local skill, then a
+home-directory copy where repository policy permits.
+
+Bundled skills:
+
+- `repo-shared-independent-code-review` -- zero-context review of a tested
+  commit.
 
 ### Python and markdown quality gates
 
@@ -93,9 +106,9 @@ into these tests:
 
 - **`test_markdown_format.py`** -- `mdformat --check --wrap=79 --number` (with
   the GFM, tables, and frontmatter plugins) across every markdown file in the
-  repo. The frontmatter plugin preserves YAML metadata. Catches drift in line
-  wrap, table alignment, ordered-list numbering, bullet markers, blank-line
-  spacing, ...
+  repo. The frontmatter plugin preserves metadata in entrypoints such as Agent
+  Skills `SKILL.md`. Catches drift in line wrap, table alignment, ordered-list
+  numbering, bullet markers, blank-line spacing, ...
 
 - **`test_markdownlint.py`** -- `markdownlint-cli2` across the repo's markdown.
   Catches the rules `mdformat` can't see: required fence languages, broken
@@ -384,4 +397,14 @@ AGENTS.md
 Listed paths are skipped by `init` / `upgrade` and by the in-sync gate, so your
 own version stays in place. Paths are repo-relative (`CLAUDE.md`, not
 `_repo_shared/templates/CLAUDE.md`). Comments (`#`) and blank lines are
-ignored.
+ignored. Skills use the same exact-path override mechanism. To suppress a
+skill's standard and Claude entrypoints, list their paths:
+
+```text
+.agents/skills/<name>/SKILL.md
+.claude/commands/<name>.md
+```
+
+Vendored files remain drift-checked. Suppressing a required skill entrypoint
+does not waive its workflow: the agent must stop unless higher-precedence
+repository instructions provide an authorized replacement.

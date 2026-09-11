@@ -25,7 +25,10 @@ Thumbs.db
 \#*\#
 
 # Claude Code local config
-.claude/
+.claude/*
+!.claude/commands/
+.claude/commands/*
+!.claude/commands/repo-shared-independent-code-review.md
 
 # Git worktrees
 .wt/

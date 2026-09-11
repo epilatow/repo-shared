@@ -18,11 +18,12 @@ Two top-level concerns:
     `_repo_shared/repo-shared`, ...).
   - `shared/dotfiles/` -> vendored at `_repo_shared/dotfiles/` PLUS
     dot-prefixed canonical-path symlinks (`.markdownlint.json`,
-    `.markdownlint-cli2.jsonc`, ...). Nested canonical destinations are
-    rejected when any parent is a symlink or non-directory, so installation and
-    stale cleanup cannot traverse a consumer-owned parent into another tree.
-    Vendored destinations receive the same preflight before any file is
-    written.
+    `.markdownlint-cli2.jsonc`, `.agents/skills/<name>/...`, ...). Agent Skills
+    use this generic file mapping; the installer does not treat a skill package
+    as a separate shared kind. Nested canonical destinations are rejected when
+    any parent is a symlink or non-directory, so installation and stale cleanup
+    cannot traverse a consumer-owned parent into another tree. Vendored
+    destinations receive the same preflight before any file is written.
   - `shared/templates/` and `shared/dottemplates/` -> vendored at
     `_repo_shared/<kind>/` PLUS a canonical-path *copy* (not a symlink) that
     `vendor()` seeds when the consumer has no file there. On a later `upgrade`
@@ -56,14 +57,15 @@ Two top-level concerns:
   canonical content directly via `importlib.resources`.
 
 The repo's own root-level files dogfood the same mechanism: the symlinked kinds
-(`DEVELOPMENT_SHARED.md`, `.markdownlint.json`, ...) are symlinks into
-`shared/`, while `CLAUDE.md` and `.gitignore` are real committed copies of
-their `shared/templates/` / `shared/dottemplates/` upstreams. Editing a
-symlinked upstream under `shared/` updates the repo-local view as a side
-effect; the template copies are independent committed files, gated against
-their upstreams by the delivered `test_in_sync.py` -- `InSyncBase` calls
-`check_in_sync` against `package_shared_root()`, which resolves to the live
-`shared/` here, so repo-shared dogfoods the same check every consumer runs.
+(`DEVELOPMENT_SHARED.md`, `.markdownlint.json`, and files below
+`.agents/skills/` and `.claude/commands/`) are symlinks into `shared/`, while
+`CLAUDE.md` and `.gitignore` are real committed copies of their
+`shared/templates/` / `shared/dottemplates/` upstreams. Editing a symlinked
+upstream under `shared/` updates the repo-local view as a side effect; the
+template copies are independent committed files, gated against their upstreams
+by the delivered `test_in_sync.py` -- `InSyncBase` calls `check_in_sync`
+against `package_shared_root()`, which resolves to the live `shared/` here, so
+repo-shared dogfoods the same check every consumer runs.
 
 Repo-local files that are NOT shared (`README.md`, this file) are real files at
 the root. `DEVELOPMENT.md` is also a real file -- the `shared/files/` upstream
