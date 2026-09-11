@@ -59,6 +59,8 @@ Bundled skills:
 - `repo-shared-independent-code-review` -- zero-context review of a tested
   commit.
 - `repo-shared-rewrite-local-commit-stack` -- safe local history rewrites.
+- `repo-shared-audit-committed-change` -- authored-context completeness audit
+  of one commit.
 
 ### Python and markdown quality gates
 

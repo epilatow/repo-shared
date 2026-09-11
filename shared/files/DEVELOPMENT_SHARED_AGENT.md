@@ -28,20 +28,12 @@ apply.
   additions, do not run tests or begin a review until those changes are
   committed. Amend that commit with incremental fixes before each retest or
   re-review rather than validating an uncommitted working tree.
-- **Self-review every commit before independent review.** Once the work is
-  committed and before the pre-review gate runs, read each commit as its
-  reviewer will, against the checklist in the exact repository-local
-  `.agents/skills/repo-shared-independent-code-review/references/review-prompt.md`,
-  and fix what you find. In particular, check that every claim in the docs,
-  comments, and commit message matches what the code does; that every instance
-  of the problem is fixed (see [Finish the work everywhere it applies]); and
-  that the change is consistent with the code around it. Ask whether the commit
-  combines logically separable changes; smaller cohesive commits review faster
-  and keep a fix for one concern from disturbing another. Split only when each
-  result is complete, independently understandable, and testable, and keep
-  tightly coupled implementation, tests, and documentation together. The
-  reviewer confirms the analysis; it does not do it for you. Edge cases and
-  code paths a reviewer finds are ones the self-review should have found.
+- **Audit every committed change before its post-change tests.** Identify the
+  exact commit, not staged, unstaged, or untracked work. While authored context
+  remains available, follow the repository-local
+  `.agents/skills/repo-shared-audit-committed-change/SKILL.md`. Fix findings in
+  the owning commit and rerun the audit before testing. This implementer-owned
+  audit does not replace independent review.
 - **A green implementer-owned full-suite gate precedes review.** After
   committing, the implementing agent runs the repo's full local test suite and
   applicable quality gates and gets a green result before spawning a review
@@ -254,11 +246,12 @@ open" is a flag the change isn't actually done; check whether the deferral is
 real or a rationalization.
 
 Past staleness is never a license for new staleness. When a review finding (or
-self-review) calls out a stale list, classification, table, or convention
-adjacent to your change, do the full work to leave it correct -- including
-restoring quality of pre-existing entries the change touches. If genuinely
-out-of-blast-radius cleanup is needed elsewhere, surface it as a separate
-suggested follow-up; don't use it to excuse skipping the in-scope work.
+committed-change audit) calls out a stale list, classification, table, or
+convention adjacent to your change, do the full work to leave it correct --
+including restoring quality of pre-existing entries the change touches. If
+genuinely out-of-blast-radius cleanup is needed elsewhere, surface it as a
+separate suggested follow-up; don't use it to excuse skipping the in-scope
+work.
 
 ## SCM
 
@@ -550,11 +543,11 @@ saved under [Skill-owned review procedure](#skill-owned-review-procedure).
 
 ## Code review
 
-After each agent-driven develop / commit / self-review / green full-suite
-pre-review gate, the implementing agent runs one independent review of the
-exact tested commit, including doc-only and lint-config commits. Review
-precedes user review and handoff. The reviewer may run focused tests but does
-not repeat the implementer's full suite.
+After each agent-driven develop / commit / committed-change audit / green
+full-suite pre-review gate, the implementing agent runs one independent review
+of the exact audited and tested commit, including doc-only and lint-config
+commits. The target need not be `HEAD`. Review precedes user review and
+handoff. The reviewer may run focused tests but not the full suite.
 
 Complete the review before acting on findings. Resolve findings in their owning
 commits and rerun affected gates. Before deciding how to handle a finding,
@@ -592,9 +585,9 @@ a known bar in the first reply, before planning. If it arises later, report it
 in the turn the green pre-review gate passes, not at handoff. Explain the
 consequence and ask the user how to proceed.
 
-Do not substitute the implementing session's own review. While blocked, the
-work is unreviewed and not ready for completion, handoff, merge, or push. Lead
-with that status when reporting the branch.
+Do not substitute the implementing session's committed-change audit. While
+blocked, the work is unreviewed and not ready for completion, handoff, merge,
+or push. Lead with that status when reporting the branch.
 
 ### Zero-context review
 
@@ -615,4 +608,3 @@ child cannot run, apply
 [When the review will not run](#when-the-review-will-not-run).
 
 [delete from a list, never from a pattern]: #delete-from-a-list-never-from-a-pattern
-[finish the work everywhere it applies]: #finish-the-work-everywhere-it-applies
