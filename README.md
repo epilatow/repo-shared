@@ -61,6 +61,8 @@ Bundled skills:
 - `repo-shared-rewrite-local-commit-stack` -- safe local history rewrites.
 - `repo-shared-audit-committed-change` -- authored-context completeness audit
   of one commit.
+- `repo-shared-run-commit-gates` -- quality and full-suite gates for one exact
+  commit.
 
 ### Python and markdown quality gates
 

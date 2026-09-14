@@ -34,39 +34,24 @@ apply.
   `.agents/skills/repo-shared-audit-committed-change/SKILL.md`. Fix findings in
   the owning commit and rerun the audit before testing. This implementer-owned
   audit does not replace independent review.
-- **A green implementer-owned full-suite gate precedes review.** After
-  committing, the implementing agent runs the repo's full local test suite and
-  applicable quality gates and gets a green result before spawning a review
-  agent. Never hand broken code to a reviewer and make the reviewer discover
-  failures that the required gate would have caught.
-- **The per-commit gate: every new commit in a stack, not just the tip.** When
-  the work is more than one commit, run the full suite and the quality gates at
-  each commit in turn, with nothing from later commits present. A stack whose
-  tip is green routinely hides an intermediate that is not: a fix, a rename, or
-  a test update lands one commit later than the change it repairs, and only the
-  tip ever sees both. That intermediate is a real state the world will reach --
-  `git bisect` checks it out, reverting the commit above leaves the tree
-  sitting on it, and a CI job may build any commit of a pushed branch. Running
-  a reduced suite (skipping the slow or browser tests, say) does not discharge
-  this: an intermediate breakage hides precisely where the subset stops
-  looking. Walk the stack in a gate worktree (see below) rather than in the
-  branch's own, which would detach its HEAD. For a previously green stack being
-  rewritten, use the rewrite skill's affected-commit gate rule instead.
+- **A green implementer-owned gate precedes review.** After the
+  authored-context audit, run the tests and quality gates relevant to the
+  committed change. When the repository requires its full suite, use the
+  repository-local `.agents/skills/repo-shared-run-commit-gates/SKILL.md` for
+  that exact commit. Do not give a reviewer a commit with red applicable gates.
+- **Gate each new commit, not just the tip.** Run applicable gates on every new
+  commit in a stack with no later commits present. For a previously green
+  rewrite, follow the rewrite skill's affected-commit and final-tip rule.
 - **An independent code review precedes handoff.** Once the gates are green,
   the implementing agent spawns the reviewer itself, unasked. An unreviewed
   branch is not ready to hand off as finished. See [Code review](#code-review).
-- **A green exact-candidate full-suite gate precedes every merge.** The
-  implementing agent owns test execution. The pre-review run satisfies this
-  gate when review produces no commit changes and the base has not moved. After
-  review fixes, run the tests or gates affected by each fix, then run the full
-  suite once on the settled candidate before requesting or acting on merge
-  approval. For a previously green rewrite, gate the changed commits and tip
-  according to the rewrite skill, including a moved-base replay; an unchanged
-  commit does not need another gate solely because its object ID changed. Merge
-  approval waives no gate. These are test gates only: rewritten commit SHAs do
-  not by themselves invalidate completed reviews. Use the independent-review
-  skill's finding-disposition reference for re-review triggers. Never merge
-  first and test afterward.
+- **A green exact-candidate gate precedes every merge.** The pre-review result
+  counts if neither content nor applicable gate commands changed. After review
+  fixes, rerun affected gates on the settled tip and changed earlier commits as
+  required by the rewrite skill. If the base moved, gate the integrated tip for
+  affected content. Merge approval waives no gate. SHA changes alone do not
+  require re-review; follow the independent-review skill's finding-disposition
+  rules. Never merge first and test afterward.
 - **Look at file contents, not extensions.** Scripts that have
   `uv run --script` in their shebang are Python scripts, not shell scripts,
   regardless of file extension or lack thereof. Always open the file before
@@ -281,13 +266,11 @@ cycle runs in a `git worktree add` under `$REPO/.wt/`, nested under the repo's
 own checkout. For an agent-created branch-backed worktree, the relative path
 under `.wt/` must exactly match the branch name: branch `<branch>` uses
 `$REPO/.wt/<branch>`. Do not invent a separate worktree-purpose name. The
-temporary code-review branch below uses an attached worktree and follows this
-rule. The per-commit gate instead uses a detached worktree at
-`$REPO/.wt/gate-<SHA>`, where `<SHA>` is the stack tip. Walk the stack in that
-one worktree and remove it when the gate finishes. Be sure that .gitignore
-contains .wt/. Once the user has approved the merge and the work has landed on
-`main`, remove the worktree and any branches you created as part of the
-development effort.
+temporary gate and code-review branches below use attached worktrees and
+therefore follow the branch-matching rule. Be sure that .gitignore contains
+.wt/. Once the user has approved the merge and the work has landed on `main`,
+remove the worktree and any branches you created as part of the development
+effort.
 
 **Set the working directory at the start of every command or block of
 commands** -- `cd <abs-path> && <command>`, or `git -C <abs-path>` per command.
