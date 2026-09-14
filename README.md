@@ -63,6 +63,8 @@ Bundled skills:
   of one commit.
 - `repo-shared-run-commit-gates` -- quality and full-suite gates for one exact
   commit.
+- `repo-shared-write-commit-message` -- draft or validate a repo-compliant
+  commit message.
 
 ### Python and markdown quality gates
 

@@ -32,6 +32,7 @@ Thumbs.db
 !.claude/commands/repo-shared-rewrite-local-commit-stack.md
 !.claude/commands/repo-shared-audit-committed-change.md
 !.claude/commands/repo-shared-run-commit-gates.md
+!.claude/commands/repo-shared-write-commit-message.md
 
 # Git worktrees
 .wt/

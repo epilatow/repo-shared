@@ -1,0 +1,1 @@
+../../../shared/dotfiles/agents/skills/repo-shared-write-commit-message/SKILL.md
