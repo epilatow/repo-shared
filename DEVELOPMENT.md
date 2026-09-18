@@ -42,7 +42,9 @@ Two top-level concerns:
     `test_repo_shared_drift.py`, `test_in_sync.py`) live solely at their
     vendored path; pytest finds them via the `testpaths` entry that
     `_inject_shared_testpaths` appends to the consumer's
-    `[tool.pytest.ini_options]`. This puts the shared tests on a separate
+    `[tool.pytest.ini_options]`. The installed repo-shared pytest plugin orders
+    shared tests before consumer tests and ends the session at that boundary
+    when a shared test failed. This puts the shared tests on a separate
     ancestor chain from the consumer's `tests/conftest.py`, so a heavy consumer
     conftest can't leak into the delivered tests.
 - `src/epilatow_repo_shared/` is the Python package. It ships `shared/` as
@@ -86,6 +88,14 @@ repo's `pyproject.toml`:
   mechanism consumers use. A regression in the delivered test surface (e.g. a
   removed class attribute, a misbehaving `[tool.repo-shared.code-quality]`
   loader) shows up here first.
+
+  `src/epilatow_repo_shared/pytest_plugin.py` makes this layer an execution
+  gate in combined pytest sessions. It moves all shared items ahead of
+  consumer-owned items, lets every shared item report, then sets pytest's
+  session failure at the boundary if any shared item failed. Consumer tests
+  therefore execute only after the complete shared layer is green. Collection
+  remains session-wide, so consumer tests are still collected before execution
+  begins.
 
   `test_repo_shared_drift.py` is included in the run alongside the others but
   `VendorDriftBase` calls `_is_repo_shared_source_root(consumer_root)` and

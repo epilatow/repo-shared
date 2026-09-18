@@ -31,6 +31,9 @@ test = ["pytest"]
 [project.scripts]
 repo-shared = "epilatow_repo_shared.cli:cli"
 
+[project.entry-points.pytest11]
+repo-shared = "epilatow_repo_shared.pytest_plugin"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/epilatow_repo_shared"]
 # The package directory contains a symlink at

@@ -179,10 +179,14 @@ After init, your repo has:
 - The consumer-visible canonical paths from the file list above -- symlinks for
   the symlink kinds, seeded real-file copies for the template kinds.
 
-A bare `uv run pytest` runs both your own tests and the delivered shared suite
-(the injected `testpaths` entry covers both). To tune knobs (ruff / mypy
-targets, mdformat wrap, etc.), or to carry your own version of a canonical
-path, see [Override mechanisms](#override-mechanisms) below.
+A bare `uv run pytest` collects both your own tests and the delivered shared
+suite (the injected `testpaths` entry covers both). The shared suite runs
+first. If any shared test fails, pytest finishes the shared suite and stops
+before executing your repo's tests; a green shared suite proceeds into the
+local tests normally. Pytest still collects the combined suite before either
+phase runs. To tune knobs (ruff / mypy targets, mdformat wrap, etc.), or to
+carry your own version of a canonical path, see
+[Override mechanisms](#override-mechanisms) below.
 
 ## Updating a consumer
 

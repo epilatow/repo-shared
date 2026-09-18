@@ -18,6 +18,8 @@ This module closes that gap directly:
   delivered test to reject -- so the bases as delivered actually
   enforce their rules in a consumer, not just against repo-shared's
   own content via the dogfood ``testpaths``.
+- Phased execution: a green delivered suite proceeds into local tests,
+  while any delivered failure prevents local test bodies from running.
 
 Each test runs ``uv run pytest`` inside a tmp consumer. ``uv run``
 resolves the consumer's venv on first invocation, so these tests are
@@ -99,6 +101,20 @@ def _pytest_in(consumer: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _plant_local_marker_test(consumer: Path) -> Path:
+    """Add a local test whose marker proves its test body ran."""
+    tests_dir = consumer / "tests"
+    tests_dir.mkdir()
+    marker = consumer / "local-suite-ran"
+    (tests_dir / "test_local.py").write_text(
+        "from pathlib import Path\n\n\n"
+        "def test_local_suite_runs() -> None:\n"
+        '    Path("local-suite-ran").write_text("yes", encoding="utf-8")\n',
+        encoding="utf-8",
+    )
+    return marker
+
+
 @_NPX_REQUIRED
 def test_all_delivered_tests_collected_in_init_consumer(
     _consumer: Path,
@@ -164,3 +180,34 @@ def test_mdformat_rejects_unformatted_markdown_in_consumer(
         f"--- stdout ---\n{result.stdout}\n"
         f"--- stderr ---\n{result.stderr}"
     )
+
+
+@_NPX_REQUIRED
+def test_local_tests_run_after_green_shared_phase(_consumer: Path) -> None:
+    marker = _plant_local_marker_test(_consumer)
+
+    result = _pytest_in(_consumer, "tests", "_repo_shared/tests")
+
+    assert result.returncode == 0, (
+        f"combined suite failed against a clean consumer:\n"
+        f"--- stdout ---\n{result.stdout}\n"
+        f"--- stderr ---\n{result.stderr}"
+    )
+    assert marker.is_file(), "local test did not run after shared tests passed"
+
+
+@_NPX_REQUIRED
+def test_red_shared_phase_prevents_local_test_execution(
+    _consumer: Path,
+) -> None:
+    marker = _plant_local_marker_test(_consumer)
+    (_consumer / "lint_me.py").write_text("import sys\n", encoding="utf-8")
+
+    result = _pytest_in(_consumer, "tests", "_repo_shared/tests")
+    combined = result.stdout + result.stderr
+
+    assert result.returncode != 0, (
+        "combined suite should fail when a shared gate fails:\n" + combined
+    )
+    assert not marker.exists(), "local test ran after a shared test failed"
+    assert "repo-shared tests failed; local tests were not run" in combined
