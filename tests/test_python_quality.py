@@ -21,6 +21,7 @@ from epilatow_repo_shared.python_quality import (
     DEFAULT_RUFF_SELECT,
     Pep723Metadata,
     ResolvedFile,
+    _build_exclude_spec,
     _consumer_has_ruff_line_length,
     _consumer_selects_ruff_rules,
     _ruff_extend_select_args,
@@ -352,18 +353,121 @@ def test_discover_python_files_falls_back_to_walk_without_git(
     assert found == ["src/pkg.py"]
 
 
-def test_discover_python_files_rejects_multi_segment_exclude(
+def test_discover_python_files_anchored_dir_exclude(
     tmp_path: Path,
 ) -> None:
-    """``docs/_build``-style entries raise rather than silently misbehave.
+    """``docs/_build`` prunes only the repo-root-anchored subtree.
 
-    The old prefix-from-root semantic supported them; the new
-    directory-name semantic does not. Surfacing the rejection at
-    discovery time tells the operator before ruff / mypy emit
-    confusing "file not found" output.
+    The anywhere-in-the-tree rule still holds for bare names, but a
+    slash-containing entry anchors at the root: ``src/docs/_build``
+    survives an entry naming ``docs/_build``.
     """
-    with pytest.raises(ValueError, match="contains '/'"):
-        discover_python_files(tmp_path, exclude_dirs=["docs/_build"])
+    git_init_repo(tmp_path)
+    (tmp_path / "docs" / "_build").mkdir(parents=True)
+    (tmp_path / "docs" / "_build" / "g.py").write_text("")
+    (tmp_path / "docs" / "keep.py").write_text("")
+    (tmp_path / "src" / "docs" / "_build").mkdir(parents=True)
+    (tmp_path / "src" / "docs" / "_build" / "k.py").write_text("")
+    found = discover_python_files(tmp_path, exclude_dirs=["docs/_build"])
+    assert found == ["docs/keep.py", "src/docs/_build/k.py"]
+
+
+def test_discover_python_files_anchored_file_exclude(
+    tmp_path: Path,
+) -> None:
+    """``legacy/old.py`` excludes exactly that file."""
+    git_init_repo(tmp_path)
+    (tmp_path / "legacy").mkdir()
+    (tmp_path / "legacy" / "old.py").write_text("")
+    (tmp_path / "legacy" / "new.py").write_text("")
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "old.py").write_text("")
+    found = discover_python_files(tmp_path, exclude_dirs=["legacy/old.py"])
+    assert found == ["legacy/new.py", "other/old.py"]
+
+
+def test_discover_python_files_sequence_anywhere_exclude(
+    tmp_path: Path,
+) -> None:
+    """``**/docs/_build`` prunes the sequence at any depth."""
+    git_init_repo(tmp_path)
+    (tmp_path / "docs" / "_build").mkdir(parents=True)
+    (tmp_path / "docs" / "_build" / "a.py").write_text("")
+    (tmp_path / "src" / "docs" / "_build").mkdir(parents=True)
+    (tmp_path / "src" / "docs" / "_build" / "b.py").write_text("")
+    (tmp_path / "docs" / "keep.py").write_text("")
+    found = discover_python_files(tmp_path, exclude_dirs=["**/docs/_build"])
+    assert found == ["docs/keep.py"]
+
+
+def test_discover_python_files_walk_fallback_anchored_exclude(
+    tmp_path: Path,
+) -> None:
+    """The os.walk fallback honors anchored entries like the git path."""
+    (tmp_path / "docs" / "_build").mkdir(parents=True)
+    (tmp_path / "docs" / "_build" / "g.py").write_text("")
+    (tmp_path / "docs" / "keep.py").write_text("")
+    found = discover_python_files(tmp_path, exclude_dirs=["docs/_build"])
+    assert found == ["docs/keep.py"]
+
+
+def test_exclude_spec_gitignore_grammar() -> None:
+    """Anchor / anywhere / dir-only semantics come from gitignore.
+
+    The knob's documented contract is ".gitignore patterns" -- pin
+    the behaviors the gates rely on so a pathspec regression or a
+    rewrite of the matching layer surfaces here first.
+    """
+    spec = _build_exclude_spec(
+        [
+            "docs/_build",
+            "/explicit",
+            "**/anygen",
+            "a/**/b",
+            "dironly/",
+            "docs/gen.md",
+        ]
+    )
+    assert spec.match_file("docs/_build/x.py")
+    assert not spec.match_file("src/docs/_build/x.py")
+    assert spec.match_file("explicit/f.py")
+    assert not spec.match_file("sub/explicit/f.py")
+    assert spec.match_file("anygen/x.py")
+    assert spec.match_file("deep/anygen/x.py")
+    assert not spec.match_file("genu/x.py")
+    assert spec.match_file("a/b/x.py")
+    assert spec.match_file("a/x/b/y.py")
+    assert not spec.match_file("x/a/b")
+    assert spec.match_file("dironly/f.py")
+    assert not spec.match_file("dironly")
+    assert spec.match_file("docs/gen.md")
+    assert not spec.match_file("other/gen.md")
+
+
+def test_exclude_spec_rejects_negation_and_dot_segments() -> None:
+    """``!`` and ``.``/``..`` entries fail with the grammar in hand."""
+    with pytest.raises(ValueError, match="negates with '!'"):
+        _build_exclude_spec(["keep", "!drop"])
+    with pytest.raises(ValueError, match="'\\.' or '\\.\\.'"):
+        _build_exclude_spec(["docs/../gen"])
+
+
+def test_exclude_spec_rejects_catch_all_entries() -> None:
+    """``*``-only entries fail loudly instead of de-gating the repo.
+
+    Under the old literal-name matcher these were silent no-ops;
+    compiled as real gitignore patterns they would exclude
+    everything, so a typo'd entry must surface as an error.
+    """
+    for bad in ("**", "**/", "*"):
+        with pytest.raises(ValueError, match="catch-all"):
+            _build_exclude_spec([bad])
+
+
+def test_exclude_spec_skips_blank_entries() -> None:
+    """Blank entries are gitignore no-ops, not errors."""
+    spec = _build_exclude_spec(["", "   "])
+    assert not spec.match_file("anything.py")
 
 
 def test_extract_pep723_metadata_parses_deps_and_requires_python(

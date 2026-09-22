@@ -56,8 +56,8 @@ def test_walk_markdown_prunes_nested_dir_by_name(tmp_path: Path) -> None:
     assert rels == ["a.md"]
 
 
-def test_walk_markdown_strips_legacy_trailing_slash(tmp_path: Path) -> None:
-    """Trailing ``/`` in an entry is tolerated for backward compat."""
+def test_walk_markdown_dir_only_trailing_slash(tmp_path: Path) -> None:
+    """A trailing ``/`` is gitignore dir-only syntax."""
     (tmp_path / "a.md").write_text("# a\n")
     (tmp_path / "build").mkdir()
     (tmp_path / "build" / "skip.md").write_text("# skip\n")
@@ -66,8 +66,8 @@ def test_walk_markdown_strips_legacy_trailing_slash(tmp_path: Path) -> None:
     assert rels == ["a.md"]
 
 
-def test_walk_markdown_strips_legacy_glob_prefix(tmp_path: Path) -> None:
-    """Legacy ``**/<dir>/`` entries collapse to bare directory names."""
+def test_walk_markdown_glob_prefix_matches_anywhere(tmp_path: Path) -> None:
+    """``**/<dir>/`` matches that directory at any depth."""
     (tmp_path / "a.md").write_text("# a\n")
     (tmp_path / "deep").mkdir()
     (tmp_path / "deep" / "cache").mkdir()
@@ -77,16 +77,28 @@ def test_walk_markdown_strips_legacy_glob_prefix(tmp_path: Path) -> None:
     assert rels == ["a.md"]
 
 
-def test_walk_markdown_rejects_multi_segment_entry(tmp_path: Path) -> None:
-    """Multi-segment entries like ``docs/_build`` are rejected loudly.
+def test_walk_markdown_anchored_dir_exclude(tmp_path: Path) -> None:
+    """``docs/_build`` prunes only the root-anchored subtree."""
+    (tmp_path / "a.md").write_text("# a\n")
+    (tmp_path / "docs" / "_build").mkdir(parents=True)
+    (tmp_path / "docs" / "_build" / "skip.md").write_text("# skip\n")
+    (tmp_path / "src" / "docs" / "_build").mkdir(parents=True)
+    (tmp_path / "src" / "docs" / "_build" / "keep.md").write_text("# keep\n")
+    found = _walk_markdown(tmp_path, exclude_dirs=("docs/_build",))
+    rels = [p.relative_to(tmp_path).as_posix() for p in found]
+    assert rels == ["a.md", "src/docs/_build/keep.md"]
 
-    The old prefix-from-root semantic supported them; the new
-    directory-name semantic doesn't, and silently changing behaviour
-    would mask consumer misconfiguration. Raise so the operator sees
-    the issue before the test run drifts.
-    """
-    with pytest.raises(ValueError, match="contains '/'"):
-        _walk_markdown(tmp_path, exclude_dirs=("docs/_build",))
+
+def test_walk_markdown_anchored_file_exclude(tmp_path: Path) -> None:
+    """``docs/gen.md`` excludes exactly that file."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "gen.md").write_text("# gen\n")
+    (tmp_path / "docs" / "real.md").write_text("# real\n")
+    (tmp_path / "other" / "gen.md").mkdir(parents=True)
+    (tmp_path / "other" / "gen.md" / "x.md").write_text("# x\n")
+    found = _walk_markdown(tmp_path, exclude_dirs=("docs/gen.md",))
+    rels = [p.relative_to(tmp_path).as_posix() for p in found]
+    assert rels == ["docs/real.md", "other/gen.md/x.md"]
 
 
 def test_walk_markdown_honors_gitignore(tmp_path: Path) -> None:
@@ -260,23 +272,32 @@ def test_markdownlint_skips_when_no_markdown(
         _Check().test_markdownlint_clean()
 
 
-def test_markdownlint_rejects_multi_segment_exclude(
+def test_markdownlint_anchored_exclude_scopes_path_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A multi-segment exclude entry fails loudly, as in mdformat.
+    """An anchored ``docs/_build`` entry scopes only that subtree.
 
-    Both markdown gates share ``_normalize_exclude_dirs``, so a
-    path-prefix entry like ``docs/_build`` is rejected before any
-    lint run rather than silently changing scope.
+    Both markdown gates share ``_build_exclude_spec``, so a
+    gitignore-pattern entry scopes this gate's literal-path list
+    exactly as it scopes the mdformat gate's discovery.
     """
-    _stub_npx(monkeypatch)
+    captured = _stub_npx(monkeypatch)
+    (tmp_path / "a.md").write_text("# a\n")
+    (tmp_path / "docs" / "_build").mkdir(parents=True)
+    (tmp_path / "docs" / "_build" / "skip.md").write_text("# skip\n")
 
     class _Check(MarkdownlintCheckBase):
         repo_root = tmp_path
         exclude_dirs = ("docs/_build",)
 
-    with pytest.raises(ValueError, match="contains '/'"):
-        _Check().test_markdownlint_clean()
+    _Check().test_markdownlint_clean()
+    assert captured["cmd"] == [
+        "npx",
+        "--yes",
+        "markdownlint-cli2",
+        "--no-globs",
+        ":a.md",
+    ]
 
 
 def _seed_markdownlint_consumer(tmp_path: Path) -> None:

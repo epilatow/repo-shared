@@ -4,8 +4,9 @@
 Both bases discover their targets the same way: ``_walk_markdown``
 returns the real-file ``*.md`` under ``repo_root`` that ``git
 ls-files`` reports -- tracked or untracked-but-not-ignored, so
-``.gitignore`` is honored -- dropping symlinks and a configurable set
-of directory names, and the base shells the explicit file list to its
+``.gitignore`` is honored -- dropping symlinks and anything matching
+a configurable set of ``.gitignore`` exclude patterns, and the base
+shells the explicit file list to its
 tool. This deliberately avoids glob expansion: a tree walk over a repo
 carrying a large ``.venv`` / ``.cache`` is both slow and wrong (those
 files are not ours to lint), so neither gate ever lets the tool expand
@@ -24,8 +25,8 @@ Node isn't installed leaves those rules unenforced. The consumer's
 Requirements section in the README lists ``npx`` as mandatory.
 
 Both bases route the ``exclude_dirs`` knob through
-``_normalize_exclude_dirs`` so consumers see the same accept / reject
-rules across the two markdown gates.
+``_build_exclude_spec`` so consumers see the same ``.gitignore``
+pattern rules across the two markdown gates.
 
 Subclass per consumer test file::
 
@@ -53,9 +54,9 @@ import pytest
 
 from epilatow_repo_shared import sp
 from epilatow_repo_shared.python_quality import (
+    _build_exclude_spec,
     _git_tracked_files,
-    _normalize_exclude_dirs,
-    _path_has_excluded_dir_segment,
+    _simple_name_prunes,
 )
 
 # ``_repo_shared`` is tracked, but the canonical-path symlinks
@@ -86,36 +87,38 @@ def _walk_markdown(
 
     Symlinks are dropped so canonical-path aliases over the
     vendored ``_repo_shared/`` tree don't produce duplicate hits.
-    ``exclude_dirs`` is an additional post-filter; see
-    ``_normalize_exclude_dirs`` and
-    ``_path_has_excluded_dir_segment``.
+    ``exclude_dirs`` entries are ``.gitignore`` patterns matched
+    against repo-root-relative paths -- see ``_build_exclude_spec``
+    for the grammar.
 
     Falls back to ``os.walk`` when ``root`` is not a git working
     tree -- the unit-test case using ``tmp_path``.
     """
-    skip = _normalize_exclude_dirs(exclude_dirs)
+    spec = _build_exclude_spec(exclude_dirs)
     tracked = _git_tracked_files(root, ".md")
     if tracked is not None:
         targets: list[Path] = []
         for rel in tracked:
-            if _path_has_excluded_dir_segment(rel, skip):
+            if spec.match_file(rel):
                 continue
             full = root / rel
             if full.is_symlink() or not full.is_file():
                 continue
             targets.append(full)
         return sorted(targets)
-    targets = []
+    prune = _simple_name_prunes(exclude_dirs)
+    found: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in skip)
+        dirnames[:] = sorted(d for d in dirnames if d not in prune)
+        rel_dir = Path(dirpath).relative_to(root)
         for name in sorted(filenames):
             if not name.endswith(".md"):
                 continue
             full = Path(dirpath) / name
             if full.is_symlink() or not full.is_file():
                 continue
-            targets.append(full)
-    return sorted(targets)
+            found.append((rel_dir / name).as_posix())
+    return sorted(root / rel for rel in found if not spec.match_file(rel))
 
 
 class MdformatCheckBase:
@@ -169,9 +172,9 @@ class MarkdownlintCheckBase:
 
     The subclass wires the consumer's
     ``[tool.repo-shared.markdown] extra-exclude-dirs`` into
-    ``exclude_dirs``, sharing the ``_normalize_exclude_dirs`` accept /
-    reject rules with ``MdformatCheckBase`` so both markdown gates
-    discover the same files and honor the same knob.
+    ``exclude_dirs``, sharing the ``_build_exclude_spec``
+    ``.gitignore`` pattern rules with ``MdformatCheckBase`` so both
+    markdown gates discover the same files and honor the same knob.
     """
 
     repo_root: ClassVar[Path] = _discover_repo_root()

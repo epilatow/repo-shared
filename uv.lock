@@ -65,6 +65,7 @@ dependencies = [
     { name = "mdformat-gfm" },
     { name = "mdformat-tables" },
     { name = "mypy" },
+    { name = "pathspec" },
     { name = "ruff" },
     { name = "tomlkit" },
 ]
@@ -80,6 +81,7 @@ requires-dist = [
     { name = "mdformat-gfm", specifier = "==1.0.0" },
     { name = "mdformat-tables", specifier = "==1.0.0" },
     { name = "mypy", specifier = "==2.3.1" },
+    { name = "pathspec", specifier = "==1.1.1" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "ruff", specifier = "==0.16.8" },
     { name = "tomlkit", specifier = "==0.15.1" },

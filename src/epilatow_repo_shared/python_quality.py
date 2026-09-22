@@ -39,6 +39,7 @@ import tomllib
 from collections.abc import Sequence
 from pathlib import Path
 
+import pathspec
 import pytest
 
 from epilatow_repo_shared import sp
@@ -356,46 +357,126 @@ def run_mypy_strict(
 
 # ``_repo_shared`` is tracked, but the canonical-path symlinks
 # expose its content at a second path, so linting both would trip
-# mypy's duplicate-module detection.
+# mypy's duplicate-module detection. As a ``.gitignore`` pattern
+# the bare name prunes that directory anywhere in the tree.
 DEFAULT_IGNORED_DIRS: tuple[str, ...] = ("_repo_shared",)
 
 
-def _normalize_exclude_dirs(exclude_dirs: Sequence[str]) -> frozenset[str]:
-    """Canonicalize the user-facing ``exclude_dirs`` shape.
+def _validate_exclude_patterns(exclude_dirs: Sequence[str]) -> list[str]:
+    """Return human-readable errors for malformed exclude entries.
 
-    Used by both the python-discovery and markdown-discovery walks so
-    consumers see the same accept / reject rules for the
-    ``extra-exclude-dirs`` pyproject keys under
-    ``[tool.repo-shared.code-quality]`` and
-    ``[tool.repo-shared.markdown]``.
-
-    Tolerated input shapes, normalised silently:
-
-    - Trailing ``/`` (e.g. ``"htmlcov/"``) -- stripped.
-    - Leading ``**/`` glob (e.g. ``"**/tmp/"``) -- stripped; entries
-      are directory names pruned anywhere in the tree by default.
-
-    Rejected with ``ValueError``:
-
-    - Multi-segment entries (e.g. ``"docs/_build"``). Entries are
-      bare directory names; a path prefix would imply a from-root
-      anchor that this exclude semantic does not support.
+    Entries are ``.gitignore`` patterns matched against
+    repo-root-relative paths, with deliberate restrictions:
+    ``!``-negation is refused because the knob is additive --
+    entries append to the base excludes, and gitignore's
+    last-match-wins ordering would let a negation re-admit
+    base-excluded files (``_repo_shared``) to the gates. ``.`` /
+    ``..`` segments are refused as meaningless for root-relative
+    patterns. Entries consisting only of ``*`` and ``/`` are
+    refused as catch-alls: under the old literal-name matcher they
+    were silent no-ops, and silently flipping them to "exclude
+    everything" would de-gate the repo on a typo. Blank entries
+    are gitignore no-ops and pass.
     """
-    result: set[str] = set()
+    errors: list[str] = []
     for entry in exclude_dirs:
-        cleaned = entry.removeprefix("**/")
-        cleaned = cleaned.rstrip("/")
-        if not cleaned:
+        stripped = entry.strip()
+        if not stripped or stripped.startswith(("#", "!")):
+            if stripped.startswith("!"):
+                errors.append(
+                    f"exclude-dirs entry {entry!r} negates with '!'. "
+                    "The knob is additive over the base excludes; "
+                    "negation is not supported."
+                )
             continue
-        if "/" in cleaned:
-            raise ValueError(
-                f"exclude-dirs entry {entry!r} contains '/': "
-                "entries are directory names pruned anywhere in the "
-                "tree, not path prefixes. Use the bare directory name "
-                "(e.g. `_build` instead of `docs/_build`)."
+        core = stripped.removeprefix("**/").rstrip("/")
+        if not core or set(core) == {"*"}:
+            errors.append(
+                f"exclude-dirs entry {entry!r} degenerates to a "
+                "catch-all or empty pattern; name the directories "
+                "or files to exclude explicitly."
             )
-        result.add(cleaned)
-    return frozenset(result)
+            continue
+        if any(segment in {".", ".."} for segment in stripped.split("/")):
+            errors.append(
+                f"exclude-dirs entry {entry!r} has a '.' or '..' "
+                "path segment; entries are root-relative .gitignore "
+                "patterns."
+            )
+    return errors
+
+
+def _build_exclude_spec(
+    exclude_dirs: Sequence[str],
+) -> pathspec.GitIgnoreSpec:
+    """Compile exclude entries into a gitignore-semantics matcher.
+
+    Accepted entry shapes (all genuine ``.gitignore`` syntax,
+    matched against repo-root-relative POSIX paths):
+
+    - bare name (``_build``) -- that directory pruned anywhere in
+      the tree;
+    - slash-containing (``docs/_build``, ``docs/gen.md``) --
+      anchored at the repo root; names a directory (prunes the
+      subtree) or an exact file;
+    - ``**/seq`` -- segment sequence at any depth;
+    - ``a/**/b`` -- zero-or-more intermediate directories;
+    - leading ``/`` -- explicit anchoring;
+    - trailing ``/`` -- directory-only match.
+
+    Malformed entries raise ``ValueError`` carrying this grammar.
+    Refused outright: ``!``-negation, ``.`` / ``..`` segments, and
+    ``*``-only catch-alls (see ``_validate_exclude_patterns``).
+    Other degenerate globs -- an unclosed ``[`` -- are accepted by
+    pathspec as silent no-ops rather than errors, so they neither
+    match nor fail loudly.
+    """
+    errors = _validate_exclude_patterns(exclude_dirs)
+    if errors:
+        raise ValueError(
+            "exclude-dirs entries are .gitignore patterns matched "
+            "against repo-root-relative paths -- a bare name prunes "
+            "that directory anywhere; a slash anchors at the repo "
+            "root and may name a directory or an exact file; "
+            "'**/seq' matches at any depth; 'a/**/b' spans "
+            "zero-or-more dirs; a trailing '/' is dir-only. "
+            "Errors:\n" + "\n".join(f"- {e}" for e in errors)
+        )
+    lines = [
+        entry
+        for entry in exclude_dirs
+        if entry.strip() and not entry.strip().startswith("#")
+    ]
+    return pathspec.GitIgnoreSpec.from_lines(lines)
+
+
+_GLOB_METACHARS = ("*", "?", "[")
+
+
+def _simple_name_prunes(exclude_dirs: Sequence[str]) -> frozenset[str]:
+    """Bare-name entries usable as an ``os.walk`` descent prune.
+
+    The walk fallback post-filters with the full gitignore spec, so
+    this is purely an optimization: a simple-name entry prunes the
+    descent into that directory (``.venv``) without walking it. A
+    trailing ``/`` and a leading ``**/`` are stripped before the
+    check, so ``htmlcov/`` and ``**/cache/`` prune the descent too.
+    Entries with interior slashes, glob metacharacters, or ``!`` /
+    ``#`` prefixes do not qualify -- correctness comes from the
+    spec.
+    """
+    names: set[str] = set()
+    for entry in exclude_dirs:
+        stripped = entry.strip()
+        if not stripped or stripped.startswith(("#", "!")):
+            continue
+        core = stripped.removeprefix("**/").rstrip("/")
+        if not core or "/" in core:
+            continue
+        if any(char in _GLOB_METACHARS for char in core):
+            continue
+        names.add(core)
+    return frozenset(names)
 
 
 def _git_tracked_files(repo_root: Path, suffix: str) -> list[str] | None:
@@ -437,17 +518,6 @@ def _git_tracked_files(repo_root: Path, suffix: str) -> list[str] | None:
     return [entry for entry in result.stdout.split("\0") if entry]
 
 
-def _path_has_excluded_dir_segment(path: str, skip: frozenset[str]) -> bool:
-    """True if any DIRECTORY segment of ``path`` is in ``skip``.
-
-    Mirrors the ``os.walk`` ``dirnames[:]`` pruning semantic: only
-    directory components are matched, never the filename itself, so
-    a skip entry like ``"htmlcov"`` excludes ``htmlcov/x.py`` but
-    keeps a top-level file literally named ``htmlcov.py``.
-    """
-    return any(segment in skip for segment in path.split("/")[:-1])
-
-
 def discover_python_files(
     repo_root: Path,
     *,
@@ -455,29 +525,27 @@ def discover_python_files(
 ) -> list[str]:
     """Return tracked ``.py`` files under ``repo_root``, repo-relative.
 
-    ``exclude_dirs`` is an additional post-filter for tracked-but-
-    skip directories; see ``_normalize_exclude_dirs`` for the
-    accepted entry shapes and ``_path_has_excluded_dir_segment`` for
-    the match semantic. Sorted for stable parametrize IDs.
+    ``exclude_dirs`` entries are ``.gitignore`` patterns matched
+    against repo-root-relative paths -- see ``_build_exclude_spec``
+    for the grammar. Sorted for stable parametrize IDs.
 
     Falls back to ``os.walk`` when ``repo_root`` is not a git
     working tree -- the unit-test case using ``tmp_path``.
     """
-    skip = _normalize_exclude_dirs(exclude_dirs)
+    spec = _build_exclude_spec(exclude_dirs)
     tracked = _git_tracked_files(repo_root, ".py")
     if tracked is not None:
-        return sorted(
-            p for p in tracked if not _path_has_excluded_dir_segment(p, skip)
-        )
+        return sorted(p for p in tracked if not spec.match_file(p))
     found: list[str] = []
+    prune = _simple_name_prunes(exclude_dirs)
     for dirpath, dirnames, filenames in os.walk(repo_root):
-        dirnames[:] = sorted(d for d in dirnames if d not in skip)
+        dirnames[:] = sorted(d for d in dirnames if d not in prune)
         rel_dir = Path(dirpath).relative_to(repo_root)
         for name in sorted(filenames):
             if not name.endswith(".py"):
                 continue
             found.append((rel_dir / name).as_posix())
-    return sorted(found)
+    return sorted(p for p in found if not spec.match_file(p))
 
 
 # Match the leading ``MAJOR.MINOR`` of a PEP 440 specifier so a value

@@ -107,10 +107,11 @@ into these tests:
   `.cache` traversal) and lints only the files git tracks or doesn't ignore
   (`.gitignore` is honored). The
   `[tool.repo-shared.markdown] extra-exclude-dirs` knob (the same knob the
-  mdformat gate reads) drops further directories from that list.
-  `.markdownlint.json` still supplies the lint rules and the custom rule. Fails
-  -- not skips -- when `npx` is missing, so the gate stays enforced everywhere;
-  install Node per the Requirements section.
+  mdformat gate reads) drops further paths -- `.gitignore`-pattern directories
+  or files -- from that list. `.markdownlint.json` still supplies the lint
+  rules and the custom rule. Fails -- not skips -- when `npx` is missing, so
+  the gate stays enforced everywhere; install Node per the Requirements
+  section.
 
 Plus the two integration sanity checks:
 
@@ -281,12 +282,18 @@ alone can't:
 # find on its own. Regular ``.py`` files do NOT need to be listed here.
 python-targets = ["bin/foo"]            # default []
 
-# Appended to the base discovery exclude set. Each entry is a
-# directory NAME pruned anywhere in the tree (not a path prefix).
-# Use for tracked-but-skip dirs that don't want lint /
+# Appended to the base discovery exclude set. Entries are
+# .gitignore patterns matched against repo-root-relative paths:
+# a bare name ("_build") prunes that directory anywhere in the
+# tree; a slash-containing entry ("docs/_build", "legacy/old.py")
+# is anchored at the repo root and may name a directory or an
+# exact file; "**/seq" matches at any depth; "a/**/b" spans
+# zero-or-more intermediate dirs. "!" negation is rejected -- the
+# knob is additive over the base excludes.
+# Use for tracked-but-skip paths that don't want lint /
 # type-checking -- code-gen output, vendored bundles you committed,
 # etc.
-extra-exclude-dirs = ["htmlcov", "_build"]    # default []
+extra-exclude-dirs = ["htmlcov", "docs/_build"]    # default []
 
 # Project-wide fallback for files WITHOUT their own PEP 723 ``# /// script``
 # block. A file with a PEP 723 block uses its own ``dependencies`` /
@@ -297,9 +304,13 @@ mypy-python-version = "3.12"            # default unset; pins uvx --python
 [tool.repo-shared.markdown]
 wrap = 78                               # default 79
 # Appended to the base exclude set of BOTH markdown gates (mdformat
-# and markdownlint). Each entry is a directory NAME pruned anywhere
-# in the tree, not a path prefix.
-extra-exclude-dirs = ["build"]          # default []
+# and markdownlint). Entries are .gitignore patterns matched
+# against repo-root-relative paths: a bare name prunes that
+# directory anywhere in the tree; a slash-containing entry is
+# anchored at the repo root and may name a directory or an exact
+# file; "**" forms match at any depth. "!" negation is rejected --
+# the knob is additive over the base excludes.
+extra-exclude-dirs = ["build", "docs/generated.md"]    # default []
 ```
 
 For files that need their own mypy environment (e.g. an HA-coupled module file

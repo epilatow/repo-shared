@@ -79,7 +79,9 @@ class CodeQualityOverrides:
     the discovered set.
 
     ``extra_exclude_dirs`` is appended to the base discovery
-    exclude list, so a consumer adds without replacing.
+    exclude list, so a consumer adds without replacing. Entries are
+    ``.gitignore`` patterns matched against repo-root-relative
+    paths (see ``python_quality._build_exclude_spec``).
 
     ``mypy_extra_deps`` and ``mypy_python_version`` are project-wide
     defaults applied to any file *without* a PEP 723 ``# /// script``
@@ -106,9 +108,15 @@ def code_quality_overrides(
       every ``.py`` they contain, but discovery already finds those,
       so the typical use is enumerating extension-less files.
     - ``extra-exclude-dirs`` (list of str, default ``[]``) --
-      appended to the base discovery exclude list. Use to exclude
-      tracked-but-skip directories (vendored third-party Python,
-      generated code, etc.).
+      appended to the base discovery exclude list. Entries are
+      ``.gitignore`` patterns matched against repo-root-relative
+      paths: a bare name (``_build``) prunes that directory anywhere
+      in the tree, a slash-containing entry (``docs/_build``,
+      ``docs/gen.md``) is anchored at the repo root and may name a
+      directory or an exact file, and ``**`` forms match at any
+      depth. Use to exclude tracked-but-skip paths (vendored
+      third-party Python, generated code, etc.). ``!`` negation is
+      rejected -- the knob is additive over the base excludes.
     - ``mypy-extra-deps`` (list of str, default ``[]``) -- project-
       wide fallback installed via ``uvx --with`` for files *without*
       their own PEP 723 ``# /// script`` block.
@@ -137,7 +145,9 @@ class MarkdownOverrides:
     ``wrap`` feeds ``MdformatCheckBase``; ``extra_exclude_dirs`` feeds
     the ``exclude_dirs`` attr of both ``MdformatCheckBase`` and
     ``MarkdownlintCheckBase``, appended to each base class' default
-    set so a consumer adds without replacing.
+    set so a consumer adds without replacing. Entries are
+    ``.gitignore`` patterns matched against repo-root-relative
+    paths (see ``python_quality._build_exclude_spec``).
     """
 
     wrap: int = 79
@@ -156,6 +166,12 @@ def markdown_overrides(
       appended to the default exclude-dirs set of both markdown gates
       (mdformat and markdownlint), so the consumer's additions stack
       on top of the shared baseline rather than replacing it.
+      Entries are ``.gitignore`` patterns matched against
+      repo-root-relative paths: a bare name prunes that directory
+      anywhere in the tree, a slash-containing entry is anchored at
+      the repo root and may name a directory or an exact file, and
+      ``**`` forms match at any depth. ``!`` negation is rejected --
+      the knob is additive over the base excludes.
     """
     s = _load_section("markdown", repo_root=repo_root)
     wrap_raw = s.get("wrap", 79)

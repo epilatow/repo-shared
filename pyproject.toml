@@ -23,6 +23,12 @@ dependencies = [
     # entry so pytest finds shared tests at their vendored path
     # without leaking the consumer's ``tests/conftest.py``.
     "tomlkit==0.15.1",
+    # pathspec implements .gitignore pattern semantics for the
+    # ``extra-exclude-dirs`` knobs -- the discovery post-filters
+    # build a GitIgnoreSpec from base + consumer entries and match
+    # repo-root-relative paths against it. Pinned so every
+    # consumer at a given SHA gets identical matching.
+    "pathspec==1.1.1",
 ]
 
 [project.optional-dependencies]
