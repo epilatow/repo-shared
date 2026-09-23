@@ -92,9 +92,10 @@ into these tests:
   at runtime only when needed.
 
 - **`test_markdown_format.py`** -- `mdformat --check --wrap=79 --number` (with
-  the GFM + tables plugins) across every markdown file in the repo. Catches
-  drift in line wrap, table alignment, ordered-list numbering, bullet markers,
-  blank-line spacing, ...
+  the GFM, tables, and frontmatter plugins) across every markdown file in the
+  repo. The frontmatter plugin preserves YAML metadata. Catches drift in line
+  wrap, table alignment, ordered-list numbering, bullet markers, blank-line
+  spacing, ...
 
 - **`test_markdownlint.py`** -- `markdownlint-cli2` across the repo's markdown.
   Catches the rules `mdformat` can't see: required fence languages, broken

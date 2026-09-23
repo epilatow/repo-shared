@@ -152,6 +152,24 @@ def test_mdformat_check_passes_on_clean_tree(tmp_path: Path) -> None:
     _Check().test_mdformat_check_clean()
 
 
+def test_mdformat_check_preserves_yaml_frontmatter(tmp_path: Path) -> None:
+    _ensure_mdformat()
+    skill = tmp_path / "SKILL.md"
+    original = (
+        "---\n"
+        "name: example-skill\n"
+        "description: Example skill.\n"
+        "---\n\n"
+        "# Example Skill\n"
+    )
+    skill.write_text(original)
+
+    class _Check(MdformatCheckBase):
+        repo_root = tmp_path
+
+    _Check().test_mdformat_check_clean()
+
+
 def test_mdformat_check_fails_on_dirty_tree(tmp_path: Path) -> None:
     _ensure_mdformat()
     (tmp_path / "a.md").write_text("Some text without trailing newline")

@@ -13,7 +13,10 @@ files are not ours to lint), so neither gate ever lets the tool expand
 a ``**`` glob.
 
 ``MdformatCheckBase`` runs ``python -m mdformat --wrap=N --number
---check`` against the discovered files. ``MarkdownlintCheckBase``
+--check`` against the discovered files. The pinned frontmatter plugin
+preserves YAML metadata in files such as Agent Skills entrypoints.
+
+``MarkdownlintCheckBase``
 shells out to ``npx markdownlint-cli2 --no-globs`` with the discovered
 files as ``:``-prefixed literal paths -- ``--no-globs`` drops the
 config's ``globs`` so markdownlint-cli2 walks nothing, while the
@@ -151,8 +154,9 @@ class MdformatCheckBase:
         if result.returncode != 0:
             raise AssertionError(
                 "mdformat reported drift. To canonicalise, run from "
-                "the repo root: uvx --with mdformat-gfm --with "
-                f"mdformat-tables mdformat --wrap={self.wrap} --number "
+                "the repo root: uvx --with mdformat-gfm "
+                "--with mdformat-tables --with mdformat-frontmatter "
+                f"mdformat --wrap={self.wrap} --number "
                 "<path>\n\n"
                 f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
             )
