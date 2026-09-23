@@ -65,6 +65,9 @@ Bundled skills:
   commit.
 - `repo-shared-write-commit-message` -- draft or validate a repo-compliant
   commit message.
+- `repo-shared-development-status-report` -- format requested reports on active
+  efforts and unmerged commit stacks with stable numbering and per-commit
+  state.
 
 ### Python and markdown quality gates
 
