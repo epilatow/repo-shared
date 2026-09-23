@@ -1012,18 +1012,12 @@ def _cmd_init(args: argparse.Namespace) -> ExitCode:
             f"{len(result.skipped_ignored)}"
         )
     if result.out_of_sync:
-        print(
-            f"  canonical paths out of sync with the upstream: "
-            f"{len(result.out_of_sync)}"
-        )
+        print(f"  shared paths requiring attention: {len(result.out_of_sync)}")
         for path, reason in result.out_of_sync:
             print(f"    {path.relative_to(repo_root)}: {reason}")
         print(
-            "  -- align each entry above with the upstream (delete a "
-            "shadowing local file then re-run ``init`` for a symlink "
-            "kind; copy the upstream from ``_repo_shared/<kind>/<rel>`` "
-            "over your copy for a template kind), or list the path "
-            "in ``.repo-shared-ignore`` to keep your own version."
+            "  -- resolve each reported conflict and retry. "
+            ".repo-shared-ignore only exempts canonical leaf paths."
         )
         return ExitCode.ERROR
     return ExitCode.SUCCESS
@@ -1630,13 +1624,10 @@ def _cmd_revendor(args: argparse.Namespace) -> ExitCode:
     in a fresh ``uv run`` that picks up the just-installed new package
     version. Not for direct human use.
 
-    Returns ERROR if any canonical-path entry is out of sync with the
-    upstream (a symlink shadowed by a local file, a template copy that
-    has drifted, ...) so the upgrade aborts on a divergence instead of
-    leaving the consumer's tree silently broken. Every violation is
-    surfaced at once -- the consumer fixes them all (sync to the
-    upstream or list in ``.repo-shared-ignore``) before re-running
-    ``upgrade``.
+    Returns ERROR for canonical path or vendored destination conflicts
+    instead of leaving the consumer's tree silently broken. Resolve
+    the reported conflicts before re-running ``upgrade``;
+    ``.repo-shared-ignore`` only exempts canonical leaf paths.
     """
     repo_root = _resolve_consumer_root(args.path)
 
@@ -1649,8 +1640,8 @@ def _cmd_revendor(args: argparse.Namespace) -> ExitCode:
         for path, reason in result.out_of_sync:
             _eprint(f"  {path.relative_to(repo_root)}: {reason}")
         _eprint(
-            "Aborting upgrade: align each path above with the upstream, "
-            "or list it in .repo-shared-ignore."
+            "Aborting upgrade: resolve each reported conflict and retry. "
+            ".repo-shared-ignore only exempts canonical leaf paths."
         )
         return ExitCode.ERROR
 

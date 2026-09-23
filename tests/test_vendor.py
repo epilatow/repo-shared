@@ -8,6 +8,7 @@ so the tests are independent of the package's bundled content.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -117,6 +118,18 @@ def _vendor_against(shared_root: Path, consumer: Path) -> VendorResult:
         v.package_shared_root = original
 
 
+def _cleanup_against(shared_root: Path, consumer: Path) -> list[Path]:
+    """Run cleanup against a synthetic shared tree."""
+    import epilatow_repo_shared.vendor as v
+
+    original = v.package_shared_root
+    v.package_shared_root = lambda: shared_root
+    try:
+        return v.cleanup_stale_vendored(consumer)
+    finally:
+        v.package_shared_root = original
+
+
 def test_vendor_writes_files_and_links(tmp_path: Path) -> None:
     shared = tmp_path / "shared"
     consumer = tmp_path / "consumer"
@@ -138,6 +151,194 @@ def test_vendor_writes_files_and_links(tmp_path: Path) -> None:
     real = wrapper_link.resolve()
     assert real.exists()
     assert real.stat().st_mode & 0o111  # executable bit preserved
+
+
+@pytest.mark.parametrize(
+    ("parent_name", "escaped_path"),
+    [
+        (".agents", Path("skills/example-review/SKILL.md")),
+        (".claude", Path("commands/example-review.md")),
+    ],
+)
+def test_nested_dotfile_parent_symlink_does_not_write_outside_consumer(
+    tmp_path: Path, parent_name: str, escaped_path: Path
+) -> None:
+    shared = tmp_path / "shared"
+    consumer = tmp_path / "consumer"
+    outside = tmp_path / "outside"
+    consumer.mkdir()
+    outside.mkdir()
+    _make_synthetic_shared(shared)
+    skill = shared / "dotfiles" / "agents" / "skills" / "example-review"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("skill\n")
+    adapter = shared / "dotfiles" / "claude" / "commands" / "example-review.md"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text("adapter\n")
+    (consumer / parent_name).symlink_to(outside, target_is_directory=True)
+
+    result = _vendor_against(shared, consumer)
+
+    assert not (outside / escaped_path).exists()
+    assert any(
+        path == consumer / parent_name for path, _reason in result.out_of_sync
+    )
+
+
+def test_check_in_sync_reports_shared_parent_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import epilatow_repo_shared.vendor as v
+
+    shared = tmp_path / "shared"
+    consumer = tmp_path / "consumer"
+    outside = tmp_path / "outside"
+    consumer.mkdir()
+    outside.mkdir()
+    _make_synthetic_shared(shared)
+    skills = shared / "dotfiles" / "agents" / "skills"
+    for name in ("first", "second"):
+        skill = skills / name
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(f"{name}\n")
+    agents = consumer / ".agents"
+    agents.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(v, "package_shared_root", lambda: shared)
+
+    violations = v.check_in_sync(consumer)
+
+    assert [path for path, _reason in violations].count(agents) == 1
+    assert list(outside.iterdir()) == []
+
+
+def test_nested_dotfile_non_directory_parent_is_reported(
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "shared"
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _make_synthetic_shared(shared)
+    skill = shared / "dotfiles" / "agents" / "skills" / "example-review"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("skill\n")
+    agents = consumer / ".agents"
+    agents.write_text("consumer file\n")
+
+    result = _vendor_against(shared, consumer)
+
+    assert agents.read_text() == "consumer file\n"
+    assert any(path == agents for path, _reason in result.out_of_sync)
+
+
+@pytest.mark.parametrize(
+    "conflict_relative",
+    [Path("_repo_shared"), Path("_repo_shared/dotfiles")],
+)
+def test_vendor_rejects_symlinked_vendor_destination_before_writes(
+    tmp_path: Path, conflict_relative: Path
+) -> None:
+    shared = tmp_path / "shared"
+    consumer = tmp_path / "consumer"
+    outside = tmp_path / "outside"
+    consumer.mkdir()
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_text("keep\n")
+    _make_synthetic_shared(shared)
+    conflict = consumer / conflict_relative
+    conflict.parent.mkdir(parents=True, exist_ok=True)
+    conflict.symlink_to(outside, target_is_directory=True)
+
+    result = _vendor_against(shared, consumer)
+
+    assert result.vendored == []
+    assert [path for path, _reason in result.out_of_sync] == [conflict]
+    assert sentinel.read_text() == "keep\n"
+    assert not (outside / "files").exists()
+
+
+def test_cleanup_removes_stale_nested_dotfile_link(tmp_path: Path) -> None:
+    shared = tmp_path / "shared"
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _make_synthetic_shared(shared)
+    skill = shared / "dotfiles" / "agents" / "skills" / "example-review"
+    skill.mkdir(parents=True)
+    source = skill / "SKILL.md"
+    source.write_text("skill\n")
+    _vendor_against(shared, consumer)
+    alias = consumer / ".agents" / "skills" / "example-review" / "SKILL.md"
+    vendored = (
+        consumer
+        / "_repo_shared"
+        / "dotfiles"
+        / "agents"
+        / "skills"
+        / "example-review"
+        / "SKILL.md"
+    )
+    source.unlink()
+
+    removed = _cleanup_against(shared, consumer)
+
+    assert vendored in removed
+    assert alias in removed
+    assert not alias.exists() and not alias.is_symlink()
+
+
+def test_cleanup_does_not_traverse_symlinked_vendor_root(
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "shared"
+    consumer = tmp_path / "consumer"
+    outside = tmp_path / "outside"
+    consumer.mkdir()
+    outside.mkdir()
+    _make_synthetic_shared(shared)
+    stale = outside / "stale.txt"
+    stale.write_text("keep\n")
+    (consumer / "_repo_shared").symlink_to(outside, target_is_directory=True)
+
+    removed = _cleanup_against(shared, consumer)
+
+    assert removed == []
+    assert stale.read_text() == "keep\n"
+
+
+def test_cleanup_does_not_unlink_through_nested_parent_symlink(
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "shared"
+    consumer = tmp_path / "consumer"
+    outside = tmp_path / "outside"
+    consumer.mkdir()
+    outside.mkdir()
+    _make_synthetic_shared(shared)
+    skill = shared / "dotfiles" / "agents" / "skills" / "example-review"
+    skill.mkdir(parents=True)
+    source = skill / "SKILL.md"
+    source.write_text("skill\n")
+    _vendor_against(shared, consumer)
+    vendored = (
+        consumer
+        / "_repo_shared"
+        / "dotfiles"
+        / "agents"
+        / "skills"
+        / "example-review"
+        / "SKILL.md"
+    )
+    shutil.rmtree(consumer / ".agents")
+    external_alias = outside / "skills" / "example-review" / "SKILL.md"
+    external_alias.parent.mkdir(parents=True)
+    external_alias.symlink_to(vendored)
+    (consumer / ".agents").symlink_to(outside, target_is_directory=True)
+    source.unlink()
+
+    removed = _cleanup_against(shared, consumer)
+
+    assert vendored in removed
+    assert external_alias.is_symlink()
 
 
 def test_vendor_idempotent(tmp_path: Path) -> None:

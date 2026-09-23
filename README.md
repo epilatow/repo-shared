@@ -19,11 +19,12 @@ instead: `git` won't follow a symlinked `.gitignore`, and Claude resolves
 customized.
 
 Every canonical path is expected to be in sync with its upstream -- a correct
-symlink, or a byte-matching template copy. `init` and `upgrade` enumerate every
-out-of-sync entry and abort with `ERROR` (exit code 4) listing them all, and
-the delivered `test_in_sync.py` gates the same invariant on every test run. To
-carry your own version of a canonical path, list it in `.repo-shared-ignore` --
-see [Override mechanisms](#override-mechanisms) below.
+file symlink, or a byte-matching template copy. Unsafe parent paths and
+vendored destinations are also reported. `init` and `upgrade` return `ERROR`
+with exit code 4 and all reported conflicts. The delivered `test_in_sync.py`
+gates canonical paths on every test run. To carry your own version of a
+canonical leaf path, list it in `.repo-shared-ignore` -- see
+[Override mechanisms](#override-mechanisms) below.
 
 What lands in your repo:
 
@@ -117,11 +118,10 @@ Plus the two integration sanity checks:
 
 - **`test_repo_shared_drift.py`** -- catches local edits to the vendored
   `_repo_shared/` tree by comparing it against the SHA-pinned package version.
-- **`test_in_sync.py`** -- verifies every canonical path matches its upstream.
-  An out-of-sync entry is either a symlink-kind path shadowed by a local file,
-  or a template-kind copy that's drifted from the upstream. `init` and
-  `upgrade` enforce the same invariant up front and abort with `ERROR` before
-  they touch your tree.
+- **`test_in_sync.py`** -- verifies canonical paths, including their parents.
+  `init` and `upgrade` also reject unsafe vendored destinations. They report
+  conflicts with `ERROR`; a canonical leaf conflict may be reported after other
+  files have been installed.
 
 The ruff, mypy, and mdformat versions are pinned in repo-shared's own
 `pyproject.toml` and ride along when the consumer pins repo-shared by SHA.

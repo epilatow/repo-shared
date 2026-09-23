@@ -317,7 +317,7 @@ def test_init_preexisting_file_errors_on_shadowed_symlink(
     )
     assert exit_code == ExitCode.ERROR
     out = capsys.readouterr().out
-    assert "canonical paths out of sync with the upstream" in out
+    assert "shared paths requiring attention" in out
     assert "DEVELOPMENT_SHARED.md" in out
     assert "shadowed by a local file" in out
     # The consumer's file is untouched.
@@ -384,7 +384,7 @@ def test_init_preexisting_template_errors_on_drift(
     )
     assert exit_code == ExitCode.ERROR
     out = capsys.readouterr().out
-    assert "canonical paths out of sync with the upstream" in out
+    assert "shared paths requiring attention" in out
     assert "CLAUDE.md" in out
     assert "template copy out of sync with upstream" in out
     # The consumer's copy is untouched.

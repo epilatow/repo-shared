@@ -200,14 +200,10 @@ class VendorResult:
       consumer listed the path in ``.repo-shared-ignore`` (explicit
       opt-out -- consumer is free to have their own file at that path,
       or no file at all).
-    - ``out_of_sync``: every canonical-path entry the run could not
-      bring into agreement with the upstream, with a per-entry reason.
-      Covers both kinds uniformly: a symlink-kind path shadowed by a
-      local file or pointing at the wrong target, and a template-kind
-      copy whose content has drifted from the upstream. ``init`` and
-      ``upgrade`` treat any non-empty list as an error and surface
-      every entry at once -- no whack-a-mole. ``.repo-shared-ignore``
-      exempts a path from this check.
+    - ``out_of_sync``: reported canonical leaves, unsafe canonical
+      parents, or vendored destination conflicts, each with a reason.
+      ``init`` and ``upgrade`` treat any non-empty list as an error.
+      ``.repo-shared-ignore`` exempts canonical leaves only.
     - ``vendored``: every file written under ``_repo_shared/``.
     """
 
@@ -251,6 +247,48 @@ def _create_symlink(link_path: Path, vendor_path: Path) -> None:
     link_path.symlink_to(rel_target)
 
 
+def _parent_conflict(root: Path, destination: Path) -> Path | None:
+    """Return the first parent that makes a destination unsafe to access."""
+    relative = destination.relative_to(root)
+    current = root
+    for part in relative.parts[:-1]:
+        current = current / part
+        if current.is_symlink() or (current.exists() and not current.is_dir()):
+            return current
+    return None
+
+
+def _vendor_destination_conflict(
+    consumer_root: Path, destination: Path
+) -> Path | None:
+    """Return the first component that makes a vendored write unsafe."""
+    conflict = _parent_conflict(consumer_root, destination)
+    if conflict is not None:
+        return conflict
+    if destination.is_symlink() or (
+        destination.exists() and not destination.is_file()
+    ):
+        return destination
+    return None
+
+
+def _vendor_destination_violations(
+    consumer_root: Path,
+    shared_entries: list[tuple[str, Path, str]],
+) -> list[tuple[Path, str]]:
+    """List unsafe vendored destinations once, before any write occurs."""
+    conflicts: dict[Path, str] = {}
+    for kind, _src, rel in shared_entries:
+        vendor_path, _link_path = consumer_paths(consumer_root, kind, rel)
+        conflict = _vendor_destination_conflict(consumer_root, vendor_path)
+        if conflict is not None:
+            conflicts[conflict] = (
+                "vendored destination conflicts with a symlink or non-file "
+                "path; replace it before init or upgrade"
+            )
+    return list(conflicts.items())
+
+
 IGNORE_FILE = ".repo-shared-ignore"
 
 
@@ -279,7 +317,7 @@ def _read_ignore_file(consumer_root: Path) -> set[str]:
 
 
 def check_in_sync(consumer_root: Path) -> list[tuple[Path, str]]:
-    """List canonical-path entries that are out of sync with the upstream.
+    """List canonical-path and parent violations against the upstream.
 
     Walks the package's shared content; for each entry (skipping the
     ``tests`` kind and any path listed in ``.repo-shared-ignore``):
@@ -297,8 +335,9 @@ def check_in_sync(consumer_root: Path) -> list[tuple[Path, str]]:
     wrapper script under ``_repo_shared/repo-shared``, which exists
     only on the consumer side; entries whose canonical path lives
     inside ``_repo_shared/`` are skipped when running from repo-shared
-    source. Returns ``(path, reason)`` tuples for every violation; an
-    empty list means everything is in sync. Used both at the end of
+    source. Unsafe canonical parents are reported once per path.
+    Returns ``(path, reason)`` tuples for every violation; an empty
+    list means everything is in sync. Used both at the end of
     ``vendor()`` (to populate ``VendorResult.out_of_sync`` so ``init``
     / ``upgrade`` can surface every violation at once) and by the
     delivered ``InSyncBase`` test.
@@ -308,6 +347,7 @@ def check_in_sync(consumer_root: Path) -> list[tuple[Path, str]]:
     in_source = _is_repo_shared_source_root(consumer_root)
     vendor_dir = consumer_root / VENDOR_DIRNAME
     violations: list[tuple[Path, str]] = []
+    reported_parent_conflicts: set[Path] = set()
     for kind, _src, rel in iter_shared(shared_root):
         _vendor_path, link_path = consumer_paths(consumer_root, kind, rel)
         if link_path is None:
@@ -318,6 +358,20 @@ def check_in_sync(consumer_root: Path) -> list[tuple[Path, str]]:
             continue
         link_rel = link_path.relative_to(consumer_root).as_posix()
         if link_rel in ignored:
+            continue
+        parent_conflict = _parent_conflict(consumer_root, link_path)
+        if parent_conflict is not None:
+            if parent_conflict not in reported_parent_conflicts:
+                violations.append(
+                    (
+                        parent_conflict,
+                        (
+                            "canonical parent conflicts with a symlink or "
+                            "non-directory path"
+                        ),
+                    )
+                )
+                reported_parent_conflicts.add(parent_conflict)
             continue
         if kind in TEMPLATE_KINDS:
             try:
@@ -363,6 +417,7 @@ def check_in_sync(consumer_root: Path) -> list[tuple[Path, str]]:
 def vendor(consumer_root: Path) -> VendorResult:
     """Vendor package shared/ content into ``consumer_root``.
 
+    Reject unsafe vendored destinations before writing any shared file.
     Per shared file: settle the canonical-path entry first, then
     overwrite the vendored copy under ``_repo_shared/<kind>/<rel>``.
     The order is load-bearing for restartability -- see the
@@ -387,18 +442,23 @@ def vendor(consumer_root: Path) -> VendorResult:
       * matches neither -> customized; leave untouched, again to be
         flagged by ``check_in_sync``.
 
-    After all placement, ``check_in_sync`` walks the same surface and
-    records every violation in ``VendorResult.out_of_sync`` -- both
-    shadowed symlinks and drifted copies -- so ``init`` and ``upgrade``
-    can surface them all at once and error out without whack-a-mole.
+    After placement, ``check_in_sync`` records canonical leaf and parent
+    violations in ``VendorResult.out_of_sync``. A canonical leaf conflict
+    can therefore be reported after other files have been installed.
 
     Returns a ``VendorResult``.
     """
     shared_root = package_shared_root()
+    shared_entries = list(iter_shared(shared_root))
     result = VendorResult()
+    result.out_of_sync.extend(
+        _vendor_destination_violations(consumer_root, shared_entries)
+    )
+    if result.out_of_sync:
+        return result
     ignored_rels = _read_ignore_file(consumer_root)
 
-    for kind, src, rel in iter_shared(shared_root):
+    for kind, src, rel in shared_entries:
         vendor_path, link_path = consumer_paths(consumer_root, kind, rel)
         # Capture the old upstream (the previous vendored content)
         # before any write. The template branch uses it to tell a
@@ -425,11 +485,18 @@ def vendor(consumer_root: Path) -> VendorResult:
                 # so toggling the ignore on frees the canonical path;
                 # a template copy is the consumer's, so leave it in
                 # place.
-                if kind not in TEMPLATE_KINDS and _is_correct_symlink(
-                    link_path, vendor_path
+                if (
+                    kind not in TEMPLATE_KINDS
+                    and _parent_conflict(consumer_root, link_path) is None
+                    and _is_correct_symlink(link_path, vendor_path)
                 ):
                     link_path.unlink()
                 result.skipped_ignored.append(link_path)
+            elif _parent_conflict(consumer_root, link_path) is not None:
+                # Never create, replace, or inspect a canonical leaf through
+                # a consumer-owned symlink or non-directory parent. The final
+                # check_in_sync() call reports the first conflicting parent.
+                pass
             elif kind in TEMPLATE_KINDS:
                 if link_path.is_symlink() or link_path.exists():
                     try:
@@ -481,6 +548,7 @@ def cleanup_stale_vendored(consumer_root: Path) -> list[Path]:
     also removed so it doesn't point at a path that just went
     away.
 
+    A symlinked vendored root or unsafe parent is left untouched.
     Returns the list of removed paths (vendored files first, then
     dangling canonical-path symlinks).
     """
@@ -495,7 +563,7 @@ def cleanup_stale_vendored(consumer_root: Path) -> list[Path]:
 
     vendor_dir = consumer_root / VENDOR_DIRNAME
     removed: list[Path] = []
-    if not vendor_dir.is_dir():
+    if vendor_dir.is_symlink() or not vendor_dir.is_dir():
         return removed
 
     stale_vendor_paths: list[Path] = []
@@ -515,7 +583,11 @@ def cleanup_stale_vendored(consumer_root: Path) -> list[Path]:
 
     for stale_vendor in stale_vendor_paths:
         link = _derive_canonical_link(consumer_root, stale_vendor)
-        if link is None or not link.is_symlink():
+        if (
+            link is None
+            or _parent_conflict(consumer_root, link) is not None
+            or not link.is_symlink()
+        ):
             continue
         try:
             resolved = link.resolve(strict=False)

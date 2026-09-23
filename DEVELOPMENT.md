@@ -18,7 +18,11 @@ Two top-level concerns:
     `_repo_shared/repo-shared`, ...).
   - `shared/dotfiles/` -> vendored at `_repo_shared/dotfiles/` PLUS
     dot-prefixed canonical-path symlinks (`.markdownlint.json`,
-    `.markdownlint-cli2.jsonc`, ...).
+    `.markdownlint-cli2.jsonc`, ...). Nested canonical destinations are
+    rejected when any parent is a symlink or non-directory, so installation and
+    stale cleanup cannot traverse a consumer-owned parent into another tree.
+    Vendored destinations receive the same preflight before any file is
+    written.
   - `shared/templates/` and `shared/dottemplates/` -> vendored at
     `_repo_shared/<kind>/` PLUS a canonical-path *copy* (not a symlink) that
     `vendor()` seeds when the consumer has no file there. On a later `upgrade`
