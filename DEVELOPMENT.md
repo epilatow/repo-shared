@@ -20,7 +20,9 @@ Two top-level concerns:
     dot-prefixed canonical-path symlinks (`.markdownlint.json`,
     `.markdownlint-cli2.jsonc`, `.agents/skills/<name>/...`, ...). Agent Skills
     use this generic file mapping; the installer does not treat a skill package
-    as a separate shared kind. Nested canonical destinations are rejected when
+    as a separate shared kind. `init` stages the symlinks, and `upgrade` stages
+    delivered and removed paths explicitly, even beneath directories ignored by
+    the consumer's Git rules. Nested canonical destinations are rejected when
     any parent is a symlink or non-directory, so installation and stale cleanup
     cannot traverse a consumer-owned parent into another tree. Vendored
     destinations receive the same preflight before any file is written.

@@ -204,6 +204,10 @@ After init, your repo has:
 - The consumer-visible canonical paths from the file list above -- symlinks for
   the symlink kinds, seeded real-file copies for the template kinds.
 
+`init` stages the canonical symlinks in Git, including links beneath a
+gitignored directory. Add the other generated files when committing the
+onboarding change.
+
 A bare `uv run pytest` collects both your own tests and the delivered shared
 suite (the injected `testpaths` entry covers both). The shared suite runs
 first. If any shared test fails, pytest finishes the shared suite and stops
@@ -239,7 +243,9 @@ delivered gates pass against your consumer without the rest of your suite. Pass
 `repo-shared/update-<short>` (deterministic per target SHA, so a re-run against
 the same target resumes a prior failed attempt rather than rebuilding). The
 resulting commit subject is
-`- repo-shared: upgrade from <prev-short> to <new-short>.`
+`- repo-shared: upgrade from <prev-short> to <new-short>.` The commit includes
+newly delivered symlinks and removals of retired ones, even when their
+directories are gitignored by the consumer.
 
 Useful flags:
 

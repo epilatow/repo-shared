@@ -31,6 +31,7 @@ from epilatow_repo_shared import sp
 from epilatow_repo_shared.exit_codes import ExitCode
 from epilatow_repo_shared.vendor import (
     VENDOR_DIRNAME,
+    VendorResult,
     _is_repo_shared_source_root,
     _is_vendor_runtime_artifact,
     check_in_sync,
@@ -313,15 +314,10 @@ def _git_commit_upgrade(
     not ``upgrade``), so the "no prior pin" case never reaches here.
     """
     message = f"- repo-shared: upgrade from {old_sha[:7]} to {new_sha[:7]}.\n"
-    # ``git add -A`` so the commit captures every file the bump
-    # touched -- pyproject (uv add + testpaths injection),
-    # ``uv.lock``, the vendored ``_repo_shared/`` tree, AND any
-    # canonical-path symlinks created or removed (whose names
-    # differ across layout migrations). The worktree is required
-    # clean before the upgrade runs, so this only stages
-    # upgrade-driven changes.
+    # The re-vendor subprocess stages its own exact paths using the new
+    # package version. These two files are changed by the outer lock bump.
     add_result = sp.run(
-        ["git", "add", "-A"],
+        ["git", "add", "--", "pyproject.toml", "uv.lock"],
         cwd=repo_root,
         check=False,
     )
@@ -333,6 +329,78 @@ def _git_commit_upgrade(
         check=False,
     )
     return commit_result.returncode
+
+
+def _stage_vendor_paths(
+    repo_root: Path,
+    result: VendorResult,
+    removed: list[Path],
+    *,
+    include_vendored: bool,
+) -> bool:
+    """Stage delivered paths even when a consumer ignores their parents."""
+    skipped = set(result.skipped_ignored)
+    links = [
+        link
+        for kind, _src, rel in iter_shared(package_shared_root())
+        if kind in ("files", "dotfiles")
+        if (link := consumer_paths(repo_root, kind, rel)[1]) is not None
+        and link not in skipped
+    ]
+    additions = links
+    if include_vendored:
+        additions = [
+            *result.vendored,
+            *result.seeded,
+            *result.updated,
+            *links,
+        ]
+    if additions:
+        relative = [
+            path.relative_to(repo_root).as_posix() for path in additions
+        ]
+        if (
+            sp.run(
+                ["git", "add", "-f", "--", *relative],
+                cwd=repo_root,
+                check=False,
+            ).returncode
+            != 0
+        ):
+            return False
+
+    removed_candidates = [
+        *removed,
+        *(
+            path
+            for path in result.skipped_ignored
+            if not path.is_symlink() and not path.exists()
+        ),
+    ]
+    if removed_candidates:
+        relative_removed = [
+            path.relative_to(repo_root).as_posix()
+            for path in removed_candidates
+        ]
+        tracked = sp.run(
+            ["git", "ls-files", "-z", "--", *relative_removed],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+        )
+        if tracked.returncode != 0:
+            return False
+        paths = [path.decode() for path in tracked.stdout.split(b"\0") if path]
+        if paths and (
+            sp.run(
+                ["git", "add", "-u", "--", *paths],
+                cwd=repo_root,
+                check=False,
+            ).returncode
+            != 0
+        ):
+            return False
+    return True
 
 
 def _running_from_local_repo_shared() -> Path | None:
@@ -990,7 +1058,7 @@ def _cmd_init(args: argparse.Namespace) -> ExitCode:
     # by an older repo-shared (e.g. a file that has since moved to a
     # template kind) must be cleared before vendor() decides whether
     # to seed a template copy at that path.
-    cleanup_stale_vendored(repo_root)
+    removed = cleanup_stale_vendored(repo_root)
     result = vendor(repo_root)
 
     print(f"init complete in {repo_root}")
@@ -1019,6 +1087,11 @@ def _cmd_init(args: argparse.Namespace) -> ExitCode:
             "  -- resolve each reported conflict and retry. "
             ".repo-shared-ignore only exempts canonical leaf paths."
         )
+        return ExitCode.ERROR
+    if not _stage_vendor_paths(
+        repo_root, result, removed, include_vendored=False
+    ):
+        _eprint("git add failed for canonical paths during init.")
         return ExitCode.ERROR
     return ExitCode.SUCCESS
 
@@ -1634,7 +1707,7 @@ def _cmd_revendor(args: argparse.Namespace) -> ExitCode:
     # Cleanup before vendor so a stale canonical-path symlink from an
     # older repo-shared is cleared before vendor() decides whether to
     # seed a template copy at that path.
-    cleanup_stale_vendored(repo_root)
+    removed = cleanup_stale_vendored(repo_root)
     result = vendor(repo_root)
     if result.out_of_sync:
         for path, reason in result.out_of_sync:
@@ -1652,6 +1725,11 @@ def _cmd_revendor(args: argparse.Namespace) -> ExitCode:
     pyproject = repo_root / "pyproject.toml"
     if pyproject.is_file():
         _inject_shared_testpaths(pyproject)
+    if not _stage_vendor_paths(
+        repo_root, result, removed, include_vendored=True
+    ):
+        _eprint("git add failed for delivered paths during upgrade.")
+        return ExitCode.ERROR
     return ExitCode.SUCCESS
 
 

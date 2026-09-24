@@ -109,6 +109,17 @@ def test_init_creates_pyproject_and_vendor_layout(
             f"{canonical} should be a real copied file, not a symlink"
         )
 
+    ignored_link = ".claude/commands/repo-shared-independent-code-review.md"
+    assert (
+        _git_in(
+            consumer, "check-ignore", "--no-index", ignored_link
+        ).stdout.strip()
+        == ignored_link
+    )
+    assert _git_in(
+        consumer, "ls-files", "--stage", "--", ignored_link
+    ).stdout.startswith("120000 ")
+
     agents = (consumer / "AGENTS.md").read_text()
     guidance_files = (
         "README.md",
@@ -944,6 +955,110 @@ def test_upgrade_with_push_ff_merges_and_cleans_up(
     short = bump_sha[:7]
     wt_path = consumer / ".wt" / f"repo-shared-update-{short}"
     assert not wt_path.exists()
+
+
+@_NPX_REQUIRED
+def test_upgrade_commits_link_inside_ignored_directory(
+    tmp_path: Path,
+) -> None:
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_with_origin(consumer, f"git+file://{fake_source}")
+
+    rel = ".claude/commands/repo-shared-upgrade-probe.md"
+    upstream = fake_source / "shared/dotfiles/claude/commands" / Path(rel).name
+    upstream.write_text("# Upgrade probe\n")
+    _git_in(fake_source, "add", "shared/dotfiles/claude/commands")
+    _git_in(fake_source, "commit", "-m", "test: add ignored command")
+
+    assert (
+        _git_in(consumer, "check-ignore", "--no-index", rel).stdout.strip()
+        == rel
+    )
+    assert (
+        _run_cli(
+            [
+                "upgrade",
+                _head_sha(fake_source),
+                "--repo",
+                str(consumer),
+                "--source",
+                f"git+file://{fake_source}",
+                "--push",
+            ]
+        )
+        == ExitCode.SUCCESS
+    )
+    assert _git_in(
+        consumer, "ls-files", "--stage", "--", rel
+    ).stdout.startswith("120000 ")
+    assert (consumer / rel).is_symlink()
+    assert (consumer / rel).read_text() == "# Upgrade probe\n"
+
+
+@_NPX_REQUIRED
+def test_upgrade_commits_removal_inside_ignored_directory(
+    tmp_path: Path,
+) -> None:
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    source_url = f"git+file://{fake_source}"
+    _setup_consumer_with_origin(consumer, source_url)
+
+    upstream_rel = (
+        "shared/dotfiles/claude/commands/repo-shared-upgrade-probe.md"
+    )
+    upstream = fake_source / upstream_rel
+    upstream.write_text("# Upgrade probe\n")
+    _git_in(fake_source, "add", upstream_rel)
+    _git_in(fake_source, "commit", "-m", "test: add ignored command")
+    rel = ".claude/commands/repo-shared-upgrade-probe.md"
+    assert (
+        _git_in(consumer, "check-ignore", "--no-index", rel).stdout.strip()
+        == rel
+    )
+    assert (
+        _run_cli(
+            [
+                "upgrade",
+                _head_sha(fake_source),
+                "--repo",
+                str(consumer),
+                "--source",
+                source_url,
+                "--push",
+            ]
+        )
+        == ExitCode.SUCCESS
+    )
+    assert _git_in(
+        consumer, "ls-files", "--stage", "--", rel
+    ).stdout.startswith("120000 ")
+
+    upstream.unlink()
+    _git_in(fake_source, "add", "-u", "--", upstream_rel)
+    _git_in(fake_source, "commit", "-m", "test: remove ignored command")
+    assert (
+        _run_cli(
+            [
+                "upgrade",
+                _head_sha(fake_source),
+                "--repo",
+                str(consumer),
+                "--source",
+                source_url,
+                "--push",
+            ]
+        )
+        == ExitCode.SUCCESS
+    )
+    assert _git_in(consumer, "ls-files", "--", rel).stdout == ""
+    assert not (consumer / rel).is_symlink()
+    assert not (
+        consumer / "_repo_shared/dotfiles/claude/commands" / Path(rel).name
+    ).exists()
 
 
 def test_upgrade_with_push_rejects_when_origin_is_non_fast_forward(
