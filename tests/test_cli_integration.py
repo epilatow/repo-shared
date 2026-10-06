@@ -1061,6 +1061,143 @@ def test_upgrade_commits_removal_inside_ignored_directory(
     ).exists()
 
 
+def _plant_consumer_startup_traps(consumer: Path) -> None:
+    """Add startup hooks that fail unless pytest is isolated from them."""
+    trap = 'raise RuntimeError("consumer startup needs local npm tools")\n'
+    (consumer / "consumer_startup_trap.py").write_text(trap)
+    (consumer / "conftest.py").write_text(trap)
+    metadata = consumer / "consumer_startup_hook-0.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: consumer-startup-hook\nVersion: 0.0\n"
+    )
+    (metadata / "entry_points.txt").write_text(
+        "[pytest11]\nconsumer-startup = consumer_startup_trap\n"
+    )
+    pyproject = consumer / "pyproject.toml"
+    text = pyproject.read_text()
+    section = "[tool.pytest.ini_options]"
+    assert text.count(section) == 1
+    pyproject.write_text(
+        text.replace(
+            section,
+            section + "\naddopts = ['-p', 'consumer_startup_trap']\n"
+            "strict_config = true\nconsumer_gate_timeout = 1",
+        )
+    )
+    (consumer / "package.json").write_text('{"name": "consumer"}\n')
+    (consumer / "package-lock.json").write_text("invalid npm lockfile\n")
+
+
+@_NPX_REQUIRED
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("flag", ["--run-tests", "--push"])
+def test_upgrade_default_shared_tests_ignore_consumer_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    resume: bool,
+    flag: str,
+) -> None:
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    # A target package may predate the isolated runner entry point.
+    runner = "src/epilatow_repo_shared/shared_test_runner.py"
+    (fake_source / runner).unlink()
+    _git_in(fake_source, "add", runner)
+    _git_in(fake_source, "commit", "-m", "test: target without shared runner")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    source = f"git+file://{fake_source}"
+    _setup_consumer_with_origin(consumer, source)
+    _plant_consumer_startup_traps(consumer)
+    _git_in(
+        consumer,
+        "add",
+        "consumer_startup_trap.py",
+        "conftest.py",
+        "consumer_startup_hook-0.0.dist-info",
+        "pyproject.toml",
+        "package.json",
+        "package-lock.json",
+    )
+    _git_in(consumer, "commit", "-m", "test: consumer startup hooks")
+    _git_in(consumer, "push", "--quiet", "origin", "main")
+    bump_sha = _add_bump_commit(fake_source)
+    argv = ["upgrade", bump_sha, "--repo", str(consumer), "--source", source]
+    wt = consumer / ".wt" / f"repo-shared-update-{bump_sha[:7]}"
+    if resume:
+        assert _run_cli(argv) == ExitCode.SUCCESS
+    # uv loads these options after the CLI starts its subprocess.
+    monkeypatch.setenv("PYTHONPATH", str(wt))
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    monkeypatch.delenv("PYTEST_PLUGINS", raising=False)
+    env_file = tmp_path / "consumer.env"
+    env_file.write_text(
+        "PYTEST_ADDOPTS=--collect-only\n"
+        "PYTEST_PLUGINS=consumer_startup_trap\n"
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD=\n"
+    )
+    monkeypatch.setenv("UV_ENV_FILE", str(env_file))
+
+    assert _run_cli([*argv, flag, "--keep-worktree"]) == ExitCode.SUCCESS
+    assert not (wt / "node_modules").exists()
+    assert cli._git_is_clean(wt)
+    if flag == "--push":
+        assert cli._read_locked_sha(consumer) == bump_sha
+
+
+def test_upgrade_explicit_command_keeps_consumer_startup_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    source = f"git+file://{fake_source}"
+    _setup_consumer_with_origin(
+        consumer,
+        source,
+        pyproject_extras=(
+            "\n[tool.repo-shared]\n"
+            "test-command = ['uv', 'run', 'pytest', '--collect-only', "
+            "'_repo_shared/tests/test_in_sync.py']\n"
+        ),
+    )
+    _plant_consumer_startup_traps(consumer)
+    _git_in(
+        consumer,
+        "add",
+        "consumer_startup_trap.py",
+        "conftest.py",
+        "consumer_startup_hook-0.0.dist-info",
+        "pyproject.toml",
+        "package.json",
+        "package-lock.json",
+    )
+    _git_in(consumer, "commit", "-m", "test: explicit consumer preflight")
+    _git_in(consumer, "push", "--quiet", "origin", "main")
+    bump_sha = _add_bump_commit(fake_source)
+    wt = consumer / ".wt" / f"repo-shared-update-{bump_sha[:7]}"
+    monkeypatch.setenv("PYTHONPATH", str(wt))
+    monkeypatch.setenv("PYTEST_PLUGINS", "consumer_startup_trap")
+
+    assert (
+        _run_cli(
+            [
+                "upgrade",
+                bump_sha,
+                "--repo",
+                str(consumer),
+                "--source",
+                source,
+                "--push",
+            ]
+        )
+        == ExitCode.ERROR
+    )
+    assert wt.is_dir()
+    assert cli._read_locked_sha(consumer) != bump_sha
+    assert not (wt / "node_modules").exists()
+
+
 def test_upgrade_with_push_rejects_when_origin_is_non_fast_forward(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

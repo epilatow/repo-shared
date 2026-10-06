@@ -1235,13 +1235,16 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
         return ExitCode.SUCCESS
 
     cmd = _read_test_command(wt_path)
-    print(f"running tests: {' '.join(cmd)}")
-    test_result = sp.run(
-        cmd,
-        cwd=wt_path,
-        check=False,
-        timeout=sp.LONG_TIMEOUT_SECONDS,
-    )
+    if cmd is None:
+        test_result = _run_shared_tests(wt_path)
+    else:
+        print(f"running tests: {' '.join(cmd)}")
+        test_result = sp.run(
+            cmd,
+            cwd=wt_path,
+            check=False,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
+        )
     if test_result.returncode != 0:
         _eprint(
             f"tests failed; worktree {wt_path} kept for debug. "
@@ -1636,37 +1639,28 @@ def _ff_merge_and_push_then_cleanup(
     return ExitCode.SUCCESS
 
 
-def _read_test_command(repo_root: Path) -> list[str]:
-    """Return the consumer-configured test command, or the default.
+def _read_test_command(repo_root: Path) -> list[str] | None:
+    """Return the consumer-configured test command, or None for shared gates.
 
     Reads ``[tool.repo-shared] test-command`` from ``pyproject.toml``
-    -- a string is split on whitespace, a list is taken as-is. Falls
-    back to running the shared tests at their vendored path
-    (``_repo_shared/tests``); pytest's conftest walk-up
-    from there never reaches the consumer's ``tests/conftest.py`` so
-    no ``--confcutdir`` flag is needed for isolation.
+    -- a string is split on whitespace, a list is taken as-is. Missing
+    or invalid configuration selects the isolated shared-only runner.
     """
     pyproject = repo_root / "pyproject.toml"
-    default = [
-        "uv",
-        "run",
-        "pytest",
-        "_repo_shared/tests",
-    ]
     if not pyproject.is_file():
-        return default
+        return None
     try:
         import tomllib
     except ImportError:
-        return default
+        return None
     try:
         with pyproject.open("rb") as fh:
             data = tomllib.load(fh)
     except (OSError, tomllib.TOMLDecodeError):
-        return default
+        return None
     raw = data.get("tool", {}).get("repo-shared", {}).get("test-command")
     if raw is None:
-        return default
+        return None
     if isinstance(raw, str):
         return raw.split()
     if isinstance(raw, list) and all(isinstance(x, str) for x in raw):
@@ -1675,7 +1669,33 @@ def _read_test_command(repo_root: Path) -> list[str]:
         "[tool.repo-shared] test-command must be a string or a list of "
         "strings; falling back to the default."
     )
-    return default
+    return None
+
+
+def _run_shared_tests(
+    repo_root: Path, *, verbose: bool = False
+) -> subprocess.CompletedProcess[bytes]:
+    """Launch isolated gates in the consumer's pinned project environment.
+
+    Use this CLI's runner so older target pins need not contain that helper.
+    """
+    cmd = [
+        "uv",
+        "run",
+        "--project",
+        str(repo_root),
+        "python",
+        str(Path(__file__).resolve().with_name("shared_test_runner.py")),
+    ]
+    if verbose:
+        cmd.append("-v")
+    print(f"running shared tests: {' '.join(cmd)}")
+    return sp.run(
+        cmd,
+        cwd=repo_root,
+        check=False,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
+    )
 
 
 def _snapshot_vendored_paths(repo_root: Path) -> set[Path]:
@@ -1801,13 +1821,7 @@ def _cmd_status(args: argparse.Namespace) -> ExitCode:
 def _cmd_run_tests(args: argparse.Namespace) -> ExitCode:
     """Run the delivered shared tests at ``_repo_shared/tests``.
 
-    Convenience wrapper for ``uv run pytest _repo_shared/tests`` in
-    the consumer's project venv. ``uv run`` is used (rather than
-    ``sys.executable -m pytest``) so the consumer's venv is the
-    runtime regardless of how the CLI was invoked (wrapper script,
-    ``uv tool``, or ``uvx``) -- the ephemeral venvs from the latter
-    two don't carry the consumer's other deps and would either lack
-    ``pytest`` or run the gates against the wrong file set.
+    Uses the isolated shared-only runner in the consumer's project venv.
 
     Refuses when invoked from a repo-shared clone (the delivered
     tests dogfood via the source-tree ``testpaths`` entry there;
@@ -1827,22 +1841,7 @@ def _cmd_run_tests(args: argparse.Namespace) -> ExitCode:
             "`repo-shared init` first to onboard this repo."
         )
         return ExitCode.CONFIG
-    cmd = [
-        "uv",
-        "run",
-        "--project",
-        str(repo_root),
-        "pytest",
-        f"{VENDOR_DIRNAME}/tests",
-    ]
-    if args.verbose:
-        cmd.append("-v")
-    result = sp.run(
-        cmd,
-        cwd=repo_root,
-        check=False,
-        timeout=sp.LONG_TIMEOUT_SECONDS,
-    )
+    result = _run_shared_tests(repo_root, verbose=args.verbose)
     if result.returncode in (0, 1):
         return ExitCode(result.returncode)
     return ExitCode.ERROR
@@ -1991,7 +1990,7 @@ def args_parser() -> argparse.ArgumentParser:
         help=(
             "after the upgrade commit, run the consumer's test command "
             "(``[tool.repo-shared] test-command`` in pyproject.toml; "
-            "defaults to ``uv run pytest _repo_shared/tests``). "
+            "defaults to isolated shared-only tests). "
             "Non-zero exit if tests fail; the commit stays in place "
             "for inspection."
         ),
@@ -2046,15 +2045,13 @@ def args_parser() -> argparse.ArgumentParser:
         description=(
             "Run the delivered shared tests (code-quality, mdformat, "
             "markdownlint, drift, in-sync) against the consumer's "
-            "repo. Equivalent to running `uv run pytest "
-            "_repo_shared/tests` by hand from the consumer root -- "
-            "use this form directly to pass additional pytest flags "
-            "(e.g. `-k`, `--lf`) that ``run-tests`` doesn't forward."
+            "repo. Uses the pinned project environment and shared gate "
+            "overrides, with consumer pytest configuration, plugins, "
+            "and conftest files disabled."
         ),
         **_help_for(
             "run-tests",
-            "run the delivered shared tests "
-            "(== `uv run pytest _repo_shared/tests`)",
+            "run the delivered shared tests in isolation",
         ),
     )
     _add_repo_arg(p_run_tests, "consumer repo root (default: cwd)")

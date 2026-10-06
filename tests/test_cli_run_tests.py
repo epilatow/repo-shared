@@ -1,9 +1,8 @@
 # This is AI generated code
 """Mock-based unit tests for ``repo-shared run-tests``.
 
-``run-tests`` is the consumer-side shortcut that shells out to
-``uv run --project <consumer> pytest _repo_shared/tests`` -- the
-delivered tests against the consumer's project. The interesting
+``run-tests`` runs the delivered tests in isolation against the
+consumer's pinned project environment. The interesting
 shape is the argv it constructs and the returncode mapping
 (0 / 1 / anything-else), not the pytest execution itself -- so these
 tests monkeypatch ``cli.sp.run`` and
@@ -13,12 +12,15 @@ for real.
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from epilatow_repo_shared import cli, sp
+from epilatow_repo_shared import cli, shared_test_runner, sp
 from epilatow_repo_shared.exit_codes import ExitCode
 
 
@@ -95,8 +97,10 @@ def test_run_tests_spawns_uv_run_pytest_against_vendored_tests(
     assert len(captured) == 1
     argv = captured[0]
     assert argv[:2] == ["uv", "run"]
-    assert "pytest" in argv
-    assert argv[-1] == "_repo_shared/tests"
+    assert argv[-2:] == [
+        "python",
+        str(Path(cli.__file__).resolve().with_name("shared_test_runner.py")),
+    ]
     assert "-v" not in argv
 
 
@@ -135,3 +139,96 @@ def test_run_tests_maps_other_pytest_returncodes_to_error(
     _stub_sp_run(monkeypatch, returncode=2)
 
     assert _run_cli(["run-tests", "--repo", str(consumer)]) == ExitCode.ERROR
+
+
+def test_shared_runner_launch_preserves_environment_until_uv_loads_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-p consumer_preflight")
+    monkeypatch.setenv("PYTEST_PLUGINS", "consumer_preflight")
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "0")
+    monkeypatch.setenv("CONSUMER_TEST_OPTION", "retained")
+    parent_env = dict(os.environ)
+    with patch.object(sp, "run", autospec=True) as run:
+        run.return_value = subprocess.CompletedProcess([], 0)
+        assert cli._run_shared_tests(tmp_path).returncode == 0
+    run.assert_called_once_with(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(tmp_path),
+            "python",
+            str(
+                Path(cli.__file__).resolve().with_name("shared_test_runner.py")
+            ),
+        ],
+        cwd=tmp_path,
+        check=False,
+        timeout=sp.LONG_TIMEOUT_SECONDS,
+    )
+    assert dict(os.environ) == parent_env
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_shared_runner_sanitizes_pytest_after_environment_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verbose: bool
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["shared-runner", *(["-v"] if verbose else [])]
+    )
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--collect-only")
+    monkeypatch.setenv("PYTEST_PLUGINS", "consumer_preflight")
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "")
+    monkeypatch.setenv("CONSUMER_TEST_OPTION", "retained")
+    with patch.object(pytest, "main", autospec=True, return_value=1) as run:
+        assert shared_test_runner.main() == 1
+    assert "PYTEST_ADDOPTS" not in os.environ
+    assert "PYTEST_PLUGINS" not in os.environ
+    assert os.environ["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+    assert os.environ["CONSUMER_TEST_OPTION"] == "retained"
+    run.assert_called_once_with(
+        [
+            "-c",
+            os.devnull,
+            "--rootdir",
+            str(tmp_path),
+            "--noconftest",
+            "_repo_shared/tests",
+            *(["-v"] if verbose else []),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        None,
+        "invalid toml",
+        "[project]\nname = 'consumer'\n",
+        "[tool.repo-shared]\ntest-command = 17\n",
+    ],
+)
+def test_unconfigured_or_invalid_test_command_uses_shared_runner(
+    tmp_path: Path, text: str | None
+) -> None:
+    if text is not None:
+        (tmp_path / "pyproject.toml").write_text(text)
+    assert cli._read_test_command(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ('"uv run pytest"', ["uv", "run", "pytest"]),
+        ("['npm', 'run', 'check']", ["npm", "run", "check"]),
+    ],
+)
+def test_explicit_test_command_preserves_consumer_invocation(
+    tmp_path: Path, value: str, expected: list[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        f"[tool.repo-shared]\ntest-command = {value}\n"
+    )
+    assert cli._read_test_command(tmp_path) == expected

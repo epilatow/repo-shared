@@ -41,7 +41,10 @@ import pytest
 # private to ``test_cli_integration`` but pytest's rootdir handling
 # puts ``tests/`` on ``sys.path``, so the import works at collection
 # time.
-from test_cli_integration import _clone_fake_source
+from test_cli_integration import (
+    _clone_fake_source,
+    _plant_consumer_startup_traps,
+)
 
 from epilatow_repo_shared import cli
 from epilatow_repo_shared.exit_codes import ExitCode
@@ -211,3 +214,61 @@ def test_red_shared_phase_prevents_local_test_execution(
     )
     assert not marker.exists(), "local test ran after a shared test failed"
     assert "repo-shared tests failed; local tests were not run" in combined
+
+
+@_NPX_REQUIRED
+@pytest.mark.parametrize("dotenv", [False, True])
+def test_run_tests_isolates_startup_and_preserves_gate_overrides(
+    _consumer: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    dotenv: bool,
+) -> None:
+    _plant_consumer_startup_traps(_consumer)
+    monkeypatch.setenv("PYTHONPATH", str(_consumer))
+    if dotenv:
+        monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+        monkeypatch.delenv("PYTEST_PLUGINS", raising=False)
+        env_file = _consumer.parent / "consumer.env"
+        env_file.write_text(
+            "PYTEST_ADDOPTS=--collect-only\n"
+            "PYTEST_PLUGINS=consumer_startup_trap\n"
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD=\n"
+        )
+        monkeypatch.setenv("UV_ENV_FILE", str(env_file))
+    else:
+        monkeypatch.delenv("UV_ENV_FILE", raising=False)
+        monkeypatch.setenv("PYTEST_ADDOPTS", "-p consumer_startup_trap")
+        monkeypatch.setenv("PYTEST_PLUGINS", "consumer_startup_trap")
+    pyproject = _consumer / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text() + "\n[tool.repo-shared.code-quality]\n"
+        "python-targets = ['gate-probe']\n"
+        "[tool.repo-shared.markdown]\nextra-exclude-dirs = ['EXCLUDED.md']\n"
+    )
+    (_consumer / "gate-probe").write_text("value = 1\n")
+    (_consumer / "EXCLUDED.md").write_text("# heading\n\n\n\nbody   \n")
+    (_consumer / "ruff.toml").write_text(
+        '[lint]\nselect = ["E", "F"]\nignore = ["F401"]\n'
+    )
+    (_consumer / "unused.py").write_text("import sys\n")
+    args = cli.args_parser().parse_args(
+        ["run-tests", "--repo", str(_consumer), "-v"]
+    )
+    assert cli.main(args) == ExitCode.SUCCESS
+    output = capfd.readouterr().out
+    assert "test_ruff_lint[gate-probe] PASSED" in output
+    assert not (_consumer / "node_modules").exists()
+
+    # Ordinary pytest still enforces consumer startup checks.
+    result = _pytest_in(
+        _consumer, "--collect-only", "_repo_shared/tests/test_in_sync.py"
+    )
+    assert result.returncode != 0
+    assert "consumer startup needs local npm tools" in (
+        result.stdout + result.stderr
+    )
+
+    # A broken gate must fail even when dotenv requests collection only.
+    (_consumer / "gate-probe").write_text("value =\n")
+    assert cli.main(args) == ExitCode.WARNING

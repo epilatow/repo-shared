@@ -234,10 +234,15 @@ _repo_shared/repo-shared run-tests          # run just the delivered shared test
 `_repo_shared/`; those are runtime artifacts, not vendored content drift.
 Unexpected non-cache files still surface as issues.
 
-`run-tests` is a shortcut for
-`uv run --project <consumer> pytest _repo_shared/tests` -- run it to verify the
-delivered gates pass against your consumer without the rest of your suite. Pass
-`-v` for verbose pytest output.
+`run-tests` runs the delivered gates in the consumer's pinned project
+environment. It isolates pytest from consumer configuration, startup plugins,
+`conftest.py` files, and plugin/options environment variables. Consumer
+`[tool.repo-shared.*]` settings and the lint/type-check tool configurations
+still apply. Consumer-specific preflights and dependency checks do not run, and
+no `npm ci` step is needed for the shared suite; Node/`npx` is still required
+for markdownlint. Pass `-v` for verbose pytest output. A direct
+`uv run pytest _repo_shared/tests` uses your normal pytest configuration and
+can therefore trigger consumer startup checks.
 
 `upgrade` refuses on a dirty working tree, then does its work in a worktree at
 `<consumer>/.wt/repo-shared-update-<short>` on a branch
@@ -253,9 +258,10 @@ Useful flags:
 - `--run-tests` runs the configured test command in the worktree after the
   bump. A non-zero exit aborts the upgrade and leaves the worktree for
   inspection. The test command comes from `[tool.repo-shared] test-command` in
-  `pyproject.toml`; the default is `uv run pytest _repo_shared/tests`, which
-  runs just the shared tests at their vendored path. To exercise the consumer's
-  own tests too:
+  `pyproject.toml`; the default uses the same isolated shared-only runner as
+  `run-tests`. An explicit test command runs with the consumer's normal
+  environment and options; ensure any dependencies it needs are installed in
+  the update worktree. To exercise the consumer's own tests too:
 
   ```toml
   [tool.repo-shared]

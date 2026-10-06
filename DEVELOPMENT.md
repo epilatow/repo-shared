@@ -121,6 +121,12 @@ repo's `pyproject.toml`:
 
 Both layers run from `uv run --extra test pytest`. No global pip installs.
 
+Consumer `run-tests` and default upgrade validation run only the delivered
+gates in isolation from consumer pytest startup behavior. Their gate overrides
+and lint/type-check configurations still apply. Explicit upgrade test commands
+and ordinary pytest invocations retain the consumer's pytest behavior. Cover
+both routes when changing the shared runner or upgrade test dispatch.
+
 ## Bumping pinned tool deps (ruff / mypy / mdformat)
 
 The shared test bases shell out to `python -m ruff` / `mypy` / `mdformat` from
