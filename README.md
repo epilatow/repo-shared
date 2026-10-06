@@ -61,8 +61,9 @@ Bundled skills:
 - `repo-shared-rewrite-local-commit-stack` -- safe local history rewrites.
 - `repo-shared-audit-committed-change` -- authored-context completeness audit
   of one commit.
-- `repo-shared-run-commit-gates` -- quality and full-suite gates for one exact
-  commit.
+- `repo-shared-run-commit-gates` -- shared and focused development checks, then
+  a final full-suite landing gate for an exact candidate, with isolated-failure
+  analysis.
 - `repo-shared-write-commit-message` -- draft or validate a repo-compliant
   commit message.
 - `repo-shared-development-status-report` -- format requested reports on active
