@@ -46,7 +46,7 @@ def _is_shared_item(item: pytest.Item, shared_test_dir: Path) -> bool:
 def pytest_collection_modifyitems(
     session: pytest.Session,
     items: list[pytest.Item],
-) -> Generator[None, object, None]:
+) -> Generator[None, object]:
     """Put shared items first and remember the shared/local boundary."""
     global _phase
 

@@ -609,7 +609,7 @@ def _find_pep723_opener(text: str, lines: Sequence[str]) -> int | None:
             ):
                 return tok.start[0] - 1
         return None
-    except (tokenize.TokenError, SyntaxError):
+    except tokenize.TokenError, SyntaxError:
         return _find_pep723_opener_in_prelude(lines)
 
 
@@ -663,7 +663,7 @@ def extract_pep723_metadata(path: Path) -> Pep723Metadata | None:
     """
     try:
         text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
     body = _extract_pep723_body(text)
     if body is None:

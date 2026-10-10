@@ -50,7 +50,7 @@ def _load_section(name: str, repo_root: Path | None = None) -> dict[str, Any]:
     try:
         with pyproject.open("rb") as fh:
             data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
+    except OSError, tomllib.TOMLDecodeError:
         return {}
     raw = data.get("tool", {}).get(_TOOL_SECTION, {}).get(name, {})
     if not isinstance(raw, dict):

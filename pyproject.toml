@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "epilatow-repo-shared"
 version = "0.1.0"
 description = "Shared dev conventions, configs, and pytest helpers consumed by sibling epilatow repos."
-requires-python = ">=3.11"
+requires-python = ">=3.15,<3.16"
 dependencies = [
     # All tools the shared test bases shell out to are pinned so
     # every consumer that pins epilatow-repo-shared by SHA gets a
@@ -59,7 +59,7 @@ testpaths = ["tests", "shared/tests"]
 
 [tool.ruff]
 line-length = 79
-target-version = "py311"
+target-version = "py315"
 
 # No [tool.ruff.lint] select on purpose. The delivered
 # test_code_quality.py keeps Ruff's pinned-version defaults and
@@ -70,7 +70,7 @@ target-version = "py311"
 # Pinning select here would suppress the injection.
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.15"
 strict = true
 
 # Dogfood: the delivered shared/tests/test_code_quality.py

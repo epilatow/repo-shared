@@ -75,6 +75,7 @@ def test_init_creates_pyproject_and_vendor_layout(
         '"epilatow-repo-shared"' in pyproject
     )
     assert "[tool.uv.sources]" in pyproject
+    assert 'requires-python = ">=3.15, <3.16"' in pyproject
 
     assert (consumer / "uv.lock").is_file()
 
@@ -499,7 +500,7 @@ def test_init_adds_dep_to_pre_existing_pyproject_without_clobbering(
         'name = "preexisting-consumer"\n'
         'version = "0.0.1"\n'
         'description = "Pre-existing project; init must not clobber."\n'
-        'requires-python = ">=3.11"\n'
+        'requires-python = ">=3.15,<3.16"\n'
         'dependencies = ["packaging"]\n'
     )
     (tmp_path / "pyproject.toml").write_text(existing)
@@ -516,6 +517,7 @@ def test_init_adds_dep_to_pre_existing_pyproject_without_clobbering(
         'description = "Pre-existing project; init must not clobber."' in text
     )
     assert '"packaging"' in text
+    assert 'requires-python = ">=3.15,<3.16"' in text
     # The dep + source got inserted.
     assert '"epilatow-repo-shared"' in text
     assert "[tool.uv.sources]" in text
@@ -524,6 +526,32 @@ def test_init_adds_dep_to_pre_existing_pyproject_without_clobbering(
     assert (tmp_path / "_repo_shared" / "files").is_dir()
     claude = tmp_path / "CLAUDE.md"
     assert claude.is_file() and not claude.is_symlink()
+
+
+def test_init_preserves_incompatible_python_requirement(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _git_init(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "older-consumer"\n'
+        'version = "0.0.1"\n'
+        'requires-python = ">=3.14,<3.15"\n'
+        "dependencies = []\n"
+    )
+
+    exit_code = _run_cli(
+        ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
+    )
+
+    assert exit_code == ExitCode.ERROR
+    assert (
+        'requires-python = ">=3.14,<3.15"'
+        in (tmp_path / "pyproject.toml").read_text()
+    )
+    assert not (tmp_path / "_repo_shared").exists()
+    assert "uv could not add epilatow-repo-shared" in capsys.readouterr().err
 
 
 def test_init_reports_error_when_source_url_is_invalid(

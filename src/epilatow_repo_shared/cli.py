@@ -24,6 +24,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from enum import Enum
+from importlib.metadata import metadata
 from pathlib import Path
 from typing import Any
 
@@ -159,7 +160,8 @@ def _ensure_repo_shared_dep(
 
     Three pyproject edits land here:
 
-    - ``uv init --bare`` creates the file if absent.
+    - ``uv init --bare`` creates the file if absent, with the Python
+      requirement of the running package.
     - ``uv add`` inserts the dep into ``[project] dependencies`` and
       the source spec into ``[tool.uv.sources]``. When ``source_url``
       doesn't already carry an explicit ``@<ref>`` pin, the upstream
@@ -188,6 +190,8 @@ def _ensure_repo_shared_dep(
                 "uv",
                 "init",
                 "--bare",
+                "--python",
+                metadata("epilatow-repo-shared")["Requires-Python"],
                 "--vcs",
                 "none",
                 "--no-readme",
@@ -557,7 +561,7 @@ def _query_pypi_latest(pkg: str) -> str | None:
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
             data = json.load(resp)
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+    except urllib.error.URLError, TimeoutError, OSError, ValueError:
         return None
     version = (
         data.get("info", {}).get("version") if isinstance(data, dict) else None
@@ -1656,7 +1660,7 @@ def _read_test_command(repo_root: Path) -> list[str] | None:
     try:
         with pyproject.open("rb") as fh:
             data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
+    except OSError, tomllib.TOMLDecodeError:
         return None
     raw = data.get("tool", {}).get("repo-shared", {}).get("test-command")
     if raw is None:

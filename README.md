@@ -164,9 +164,9 @@ afterwards) handles onboarding, bumping the pinned SHA, and surfacing drift.
 A consumer needs the following installed on the dev / CI environment that runs
 the test suite:
 
-- **Python >= 3.11** + **`uv`**: the test suite is `uv run pytest`. ruff, mypy,
-  and mdformat are `==`-pinned in repo-shared's own pyproject and uv resolves
-  them into the consumer's `uv.lock`.
+- **`uv`**: the test suite is `uv run pytest`. ruff, mypy, and mdformat are
+  `==`-pinned in repo-shared's own pyproject and uv resolves them into the
+  consumer's `uv.lock`.
 - **Node.js / `npx`**: required for `markdownlint-cli2`, which the
   `test_markdownlint.py` gate shells out to. Install via your package manager
   (`brew install node`, `apt install nodejs npm`, etc.). The gate fails -- not
@@ -175,6 +175,10 @@ the test suite:
 - **Git**: `upgrade` does its work in a worktree under
   `<consumer>/.wt/repo-shared-update-<short>` and `git push`-es from there on
   `--push`.
+
+repo-shared supports Python `>=3.15,<3.16`. Before onboarding or upgrading an
+existing project, adjust its `requires-python` to a compatible range; these
+commands preserve existing requirements and fail if they are incompatible.
 
 ## Onboarding a new repo
 
@@ -198,7 +202,8 @@ After init, your repo has:
   pinned to a SHA, with `_repo_shared/tests` added to
   `[tool.pytest.ini_options] testpaths` so pytest picks up the shared tests on
   the next `uv run pytest`. `init` creates `pyproject.toml` if you don't
-  already have one.
+  already have one. A new project adopts repo-shared's Python requirement;
+  existing project requirements are preserved.
 - `_repo_shared/` holding the vendored shared content (`files/`, `dotfiles/`,
   `templates/`, `dottemplates/`, `tests/`) plus the `_repo_shared/repo-shared`
   wrapper script you'll use for subsequent operations.
