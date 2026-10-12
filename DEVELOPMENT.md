@@ -166,17 +166,15 @@ the CLI integration tests under `tests/`, each of which spawns a nested
 nesting is redundant for validating a tool bump and slow enough under
 contention to exhaust the subprocess timeout.
 
-When `uv lock` rejects the full bump set -- the common shape is a tool's new
-major release landing on PyPI before its plugin ecosystem catches up, e.g.
-`mdformat 1.0` while `mdformat-tables` still caps `mdformat<0.8` -- the
-resolver falls back to a per-pin sweep in pyproject order. Each bump is kept
-iff it locks together with the already-accepted set, and dropped otherwise.
-Dropped pins are reported as `skipped (conflict): <name> <old> -> <new>` and
-the non-conflicting bumps still land in the commit. If every candidate
-conflicts, the worktree + branch are removed and the run exits cleanly --
-there's nothing the maintainer can do until the blocking upstream catches up
-(in the canonical shape above, until `mdformat-tables` drops its cap), and
-nightly automation should shrug at the situation rather than page.
+When `uv lock` rejects the full bump set -- for example, a tool's new major
+release conflicts with a plugin's requirements -- the resolver falls back to a
+per-pin sweep in pyproject order. Each bump is kept iff it locks together with
+the already-accepted set, and dropped otherwise. Dropped pins are reported as
+`skipped (conflict): <name> <old> -> <new>` and the non-conflicting bumps still
+land in the commit. If every candidate conflicts, the worktree + branch are
+removed and the run exits cleanly -- there's nothing the maintainer can do
+until the blocking upstream catches up, and nightly automation should shrug at
+the situation rather than page.
 
 The subcommand is hidden from the consumer-shipped `--help` output (the same
 CLI module ships in every consumer's venv, but the subcommand only makes sense

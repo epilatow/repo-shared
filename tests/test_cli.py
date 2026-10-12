@@ -506,11 +506,10 @@ def _stub_uv_lock_rejecting(
 ) -> list[str]:
     """Stub ``sp.run`` so ``uv lock`` fails iff ``forbidden`` is in pyproject.
 
-    Simulates a real PyPI conflict shape (e.g. ``mdformat==1.0.0`` is
-    incompatible with the plugin ecosystem's current caps): the lock
-    fails for any candidate set that contains the forbidden pin, and
-    succeeds otherwise. Returns the list of pyproject snapshots seen
-    by the stub so a test can also assert iteration order.
+    Simulates a dependency conflict: the lock fails for any candidate
+    set that contains the forbidden pin, and succeeds otherwise.
+    Returns the list of pyproject snapshots seen by the stub so a
+    test can also assert iteration order.
     """
     snapshots: list[str] = []
 
@@ -572,9 +571,9 @@ def test_resolve_compatible_bumps_drops_conflicting_pin_keeps_others(
     wt.mkdir()
     wt_pyproject = wt / "pyproject.toml"
     wt_pyproject.write_text(_PYPROJECT_WITH_PINS)
-    # Simulate the real-world shape: ``mdformat==1.0.0`` can't resolve
-    # against the plugin caps. Any candidate set containing that pin
-    # fails the lock; everything else passes.
+    # Simulate a plugin cap that rejects ``mdformat==1.0.0``.
+    # Any candidate set containing that pin fails the lock;
+    # everything else passes.
     snapshots = _stub_uv_lock_rejecting(
         monkeypatch, wt_pyproject=wt_pyproject, forbidden='"mdformat==1.0.0"'
     )
@@ -693,7 +692,7 @@ def test_worktree_has_expected_bumps_true_for_partial_bump_with_old_skip(
 ) -> None:
     # Resume path for a prior conflict-fallback run: ruff and mypy
     # landed at their new versions; mdformat stayed at its old pin
-    # because mdformat-tables held it back. A re-run with the same
+    # because a plugin held it back. A re-run with the same
     # PyPI candidate set must accept this state as resumable.
     wt = tmp_path / "wt"
     wt.mkdir()

@@ -181,6 +181,32 @@ def test_mdformat_check_fails_on_dirty_tree(tmp_path: Path) -> None:
         _Check().test_mdformat_check_clean()
 
 
+@pytest.mark.parametrize("canonical", [False, True])
+def test_mdformat_check_enforces_table_alignment(
+    tmp_path: Path, canonical: bool
+) -> None:
+    _ensure_mdformat()
+    aligned = (
+        "| a      |      b |   c    |\n"
+        "| :----- | -----: | :----: |\n"
+        "| 1      |      2 |   3    |\n"
+        "| xxxxxx | yyyyyy | zzzzzz |\n"
+    )
+    unaligned = (
+        "a | b | c\n:- | -: | :-:\n1 | 2 | 3\nxxxxxx | yyyyyy | zzzzzz\n"
+    )
+    (tmp_path / "table.md").write_text(aligned if canonical else unaligned)
+
+    class _Check(MdformatCheckBase):
+        repo_root = tmp_path
+
+    if canonical:
+        _Check().test_mdformat_check_clean()
+    else:
+        with pytest.raises(AssertionError, match="mdformat reported drift"):
+            _Check().test_mdformat_check_clean()
+
+
 def test_markdownlint_fails_without_npx(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -13,10 +13,9 @@ dependencies = [
     # deterministic ruff / mypy / mdformat at lock time. Bumping
     # the pin is a deliberate repo-shared commit, never a drive-by
     # ``uv lock --upgrade`` in a consumer.
-    "mdformat==0.7.22",
+    "mdformat==1.0.0",
     "mdformat-frontmatter==2.1.2",
     "mdformat-gfm==1.0.0",
-    "mdformat-tables==1.0.0",
     "ruff==0.17.0",
     "mypy==2.4.0",
     # tomlkit for round-trip-preserving pyproject edits in

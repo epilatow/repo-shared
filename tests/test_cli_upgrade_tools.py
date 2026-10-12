@@ -289,25 +289,30 @@ def test_upgrade_tools_bumps_one_pin_in_worktree(
     assert " from " in log and " to " in log and log.endswith(".")
 
 
+@pytest.mark.parametrize(
+    ("tool", "old_version"), [("ruff", "0.5.0"), ("mdformat", "0.7.22")]
+)
 def test_upgrade_tools_push_ff_merges_into_default_branch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tool: str,
+    old_version: str,
 ) -> None:
     pinned = dict(
         cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
     )
-    current_ruff = pinned["ruff"]
-    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    current_version = pinned[tool]
+    clone = _build_fake_clone(tmp_path, pin_overrides={tool: old_version})
     monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
-    _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
+    _stub_pypi(monkeypatch, pinned)
     origin = tmp_path / "origin.git"
     pre_push_origin_head = subprocess.check_output(
         ["git", "rev-parse", "main"], cwd=origin, text=True
     ).strip()
     capsys.readouterr()
 
-    exit_code = _run_cli(["upgrade-tools", "--only", "ruff", "--push"])
+    exit_code = _run_cli(["upgrade-tools", "--push"])
     assert exit_code == ExitCode.SUCCESS
 
     post_push_origin_head = subprocess.check_output(
@@ -317,8 +322,8 @@ def test_upgrade_tools_push_ff_merges_into_default_branch(
     landed_pyproject = subprocess.check_output(
         ["git", "show", "main:pyproject.toml"], cwd=origin, text=True
     )
-    assert f'"ruff=={current_ruff}"' in landed_pyproject
-    bumps = [("ruff", "0.5.0", current_ruff)]
+    assert f'"{tool}=={current_version}"' in landed_pyproject
+    bumps = [(tool, old_version, current_version)]
     bump_hash = cli._tool_bump_hash(bumps)
     wt_path = clone / ".wt" / f"repo-shared-tool-bump-{bump_hash}"
     assert not wt_path.exists()
@@ -373,10 +378,9 @@ def test_upgrade_tools_exits_clean_when_every_bump_conflicts(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # The canonical shape: PyPI has a newer version, but the per-pin
-    # sweep can't land it together with the existing pin set (e.g.
-    # mdformat 1.0 capped by mdformat-tables<0.8). The resolver
-    # returns accepted=[] + skipped=[bump]; the command should print
-    # the status, clean up worktree + branch, and exit SUCCESS.
+    # sweep can't land it together with the existing pin set. The
+    # resolver returns accepted=[] + skipped=[bump]; the command should
+    # print the status, clean up worktree + branch, and exit SUCCESS.
     pinned = dict(
         cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
     )

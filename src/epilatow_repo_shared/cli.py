@@ -748,9 +748,8 @@ def _resolve_compatible_bumps(
 
     Handles the realistic conflict shape: a tool's new major
     release lands on PyPI before its plugin ecosystem catches up
-    (e.g. ``mdformat 1.0`` while ``mdformat-tables`` still caps
-    ``mdformat<0.8``). The non-conflicting bumps still land instead
-    of the whole transaction failing.
+    and conflicts with a plugin's requirements. The non-conflicting
+    bumps still land instead of the whole transaction failing.
     """
     if _try_bump_set(
         wt_path=wt_path,

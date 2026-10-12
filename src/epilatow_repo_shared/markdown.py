@@ -155,7 +155,7 @@ class MdformatCheckBase:
             raise AssertionError(
                 "mdformat reported drift. To canonicalise, run from "
                 "the repo root: uvx --with mdformat-gfm "
-                "--with mdformat-tables --with mdformat-frontmatter "
+                "--with mdformat-frontmatter "
                 f"mdformat --wrap={self.wrap} --number "
                 "<path>\n\n"
                 f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
