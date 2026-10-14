@@ -75,7 +75,7 @@ def test_init_creates_pyproject_and_vendor_layout(
         '"epilatow-repo-shared"' in pyproject
     )
     assert "[tool.uv.sources]" in pyproject
-    assert 'requires-python = ">=3.15, <3.16"' in pyproject
+    assert 'requires-python = ">=3.14"' in pyproject
 
     assert (consumer / "uv.lock").is_file()
 
@@ -533,11 +533,14 @@ def test_init_preserves_incompatible_python_requirement(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _git_init(tmp_path)
+    # Must be a range this package's own ``requires-python`` does not
+    # cover, or there is no incompatibility to preserve. An open floor
+    # below ours is the shape a real consumer arrives with.
     (tmp_path / "pyproject.toml").write_text(
         "[project]\n"
         'name = "older-consumer"\n'
         'version = "0.0.1"\n'
-        'requires-python = ">=3.14,<3.15"\n'
+        'requires-python = ">=3.11"\n'
         "dependencies = []\n"
     )
 
@@ -547,7 +550,7 @@ def test_init_preserves_incompatible_python_requirement(
 
     assert exit_code == ExitCode.ERROR
     assert (
-        'requires-python = ">=3.14,<3.15"'
+        'requires-python = ">=3.11"'
         in (tmp_path / "pyproject.toml").read_text()
     )
     assert not (tmp_path / "_repo_shared").exists()
