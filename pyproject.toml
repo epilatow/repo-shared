@@ -16,13 +16,13 @@ dependencies = [
     "mdformat==1.0.0",
     "mdformat-frontmatter==2.1.2",
     "mdformat-gfm==1.0.0",
-    "ruff==0.17.0",
+    "ruff==0.17.1",
     "mypy==2.4.0",
     # tomlkit for round-trip-preserving pyproject edits in
     # ``_ensure_repo_shared_dep`` -- injects the ``testpaths``
     # entry so pytest finds shared tests at their vendored path
     # without leaking the consumer's ``tests/conftest.py``.
-    "tomlkit==0.15.1",
+    "tomlkit==0.15.2",
     # pathspec implements .gitignore pattern semantics for the
     # ``extra-exclude-dirs`` knobs -- the discovery post-filters
     # build a GitIgnoreSpec from base + consumer entries and match
