@@ -127,6 +127,11 @@ and lint/type-check configurations still apply. Explicit upgrade test commands
 and ordinary pytest invocations retain the consumer's pytest behavior. Cover
 both routes when changing the shared runner or upgrade test dispatch.
 
+`runtime_environment.py` owns the Node cache policy used by shared subprocess
+launches, early pytest startup, and the isolated runner. Tests must cover
+consumer startup hooks, real Node cache behavior, explicit child environments,
+and restoration after in-process sessions.
+
 ## Bumping pinned tool deps (ruff / mypy / mdformat)
 
 The shared test bases shell out to `python -m ruff` / `mypy` / `mdformat` from

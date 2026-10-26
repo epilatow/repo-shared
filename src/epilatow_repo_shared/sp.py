@@ -31,7 +31,9 @@ import subprocess
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
+
+from epilatow_repo_shared.runtime_environment import tool_environment
 
 SHORT_TIMEOUT_SECONDS = 60
 LONG_TIMEOUT_SECONDS = 600
@@ -43,6 +45,7 @@ def run(
     *,
     timeout: int = ...,
     text: Literal[True],
+    env: Mapping[str, str] | None = ...,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[str]: ...
 
@@ -53,6 +56,7 @@ def run(
     *,
     timeout: int = ...,
     text: Literal[False] = ...,
+    env: Mapping[str, str] | None = ...,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[bytes]: ...
 
@@ -62,12 +66,13 @@ def run(
     *,
     timeout: int = SHORT_TIMEOUT_SECONDS,
     check: bool = False,
+    env: Mapping[str, str] | None = None,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[Any]:
     """Run ``cmd`` with a mandatory timeout.
 
-    Thin wrapper around ``subprocess.run`` that forces every
-    invocation to carry a timeout. Re-raises
+    Every child receives the shared tool environment policy, including
+    callers supplying their own environment mapping. Re-raises
     ``subprocess.TimeoutExpired`` so the top-level CLI dispatcher
     can map it to ``ExitCode.TIMEOUT``.
 
@@ -77,4 +82,10 @@ def run(
     callers that only inspect ``returncode`` get bytes and can ignore
     the payload.
     """
-    return subprocess.run(cmd, timeout=timeout, check=check, **kwargs)
+    return subprocess.run(
+        cmd,
+        timeout=timeout,
+        check=check,
+        env=tool_environment(env),
+        **kwargs,
+    )

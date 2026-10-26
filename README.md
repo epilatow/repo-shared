@@ -249,6 +249,14 @@ for markdownlint. Pass `-v` for verbose pytest output. A direct
 `uv run pytest _repo_shared/tests` uses your normal pytest configuration and
 can therefore trigger consumer startup checks.
 
+Shared tool subprocesses and pytest sessions disable Node's persistent module
+compilation cache with `NODE_DISABLE_COMPILE_CACHE=1`. The pytest policy takes
+effect before consumer conftests and configure hooks, and also applies to the
+isolated `run-tests` runner. This prevents disposable worktree paths from
+accumulating compilation cache files in the system temporary directory.
+In-process pytest runs restore the caller's setting when they finish. Direct
+consumer commands outside these entry points must apply their own policy.
+
 `upgrade` refuses on a dirty working tree, then does its work in a worktree at
 `<consumer>/.wt/repo-shared-update-<short>` on a branch
 `repo-shared/update-<short>` (deterministic per target SHA, so a re-run against

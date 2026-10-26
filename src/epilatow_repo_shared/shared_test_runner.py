@@ -36,7 +36,17 @@ def main() -> int:
     ]
     if options.verbose:
         args.append("-v")
-    return int(pytest.main(args))
+    # This file also runs in environments pinned before our current helpers.
+    name = "NODE_DISABLE_COMPILE_CACHE"
+    previous = os.environ.get(name)
+    os.environ[name] = "1"
+    try:
+        return int(pytest.main(args))
+    finally:
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
 
 
 if __name__ == "__main__":

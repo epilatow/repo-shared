@@ -9,10 +9,21 @@ against a tree that already failed its common quality gates.
 from __future__ import annotations
 
 from collections.abc import Generator
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+from epilatow_repo_shared.runtime_environment import node_cache_disabled
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_load_initial_conftests(early_config: pytest.Config) -> None:
+    """Apply tool policy before consumer conftests and configure hooks."""
+    environment = ExitStack()
+    early_config.add_cleanup(environment.close)
+    environment.enter_context(node_cache_disabled())
 
 
 @dataclass

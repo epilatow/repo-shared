@@ -128,6 +128,11 @@ or side effects, or flag invariants the type system can't enforce.
 
 ## Testing
 
+Shared tool subprocesses and pytest sessions run with
+`NODE_DISABLE_COMPILE_CACHE=1` so disposable worktrees do not accumulate Node
+compilation caches. Consumer commands launched outside shared tools and pytest
+must apply the same policy at their own entry points.
+
 - Add tests for new functionality. A change that adds a feature without a test
   is incomplete.
 - During development, run the repo-shared tests and focused tests for the
