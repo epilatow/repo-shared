@@ -45,6 +45,11 @@ def _stub_sp_run(
         )
 
     monkeypatch.setattr(sp, "run", fake)
+    monkeypatch.setattr(
+        cli,
+        "default_pytest_temproot",
+        lambda root, _invocation: root / "tmp" / "pytest",
+    )
     return captured
 
 
@@ -95,11 +100,13 @@ def test_run_tests_spawns_uv_run_pytest_against_vendored_tests(
 
     assert _run_cli(["run-tests", "--repo", str(consumer)]) == ExitCode.SUCCESS
     assert len(captured) == 1
-    argv = captured[0]
+    argv = captured[-1]
     assert argv[:2] == ["uv", "run"]
-    assert argv[-2:] == [
+    assert argv[-4:] == [
         "python",
         str(Path(cli.__file__).resolve().with_name("shared_test_runner.py")),
+        "--default-temproot",
+        str(consumer / "tmp" / "pytest"),
     ]
     assert "-v" not in argv
 
@@ -116,7 +123,7 @@ def test_run_tests_verbose_flag_appends_dash_v(
         _run_cli(["run-tests", "-v", "--repo", str(consumer)])
         == ExitCode.SUCCESS
     )
-    assert "-v" in captured[0]
+    assert "-v" in captured[-1]
 
 
 def test_run_tests_maps_pytest_returncode_one_to_warning(
@@ -149,6 +156,9 @@ def test_shared_runner_launch_preserves_environment_until_uv_loads_it(
     monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "0")
     monkeypatch.setenv("CONSUMER_TEST_OPTION", "retained")
     parent_env = dict(os.environ)
+    monkeypatch.setattr(
+        cli, "default_pytest_temproot", lambda *_args: tmp_path
+    )
     with patch.object(sp, "run", autospec=True) as run:
         run.return_value = subprocess.CompletedProcess([], 0)
         assert cli._run_shared_tests(tmp_path).returncode == 0
@@ -162,12 +172,29 @@ def test_shared_runner_launch_preserves_environment_until_uv_loads_it(
             str(
                 Path(cli.__file__).resolve().with_name("shared_test_runner.py")
             ),
+            "--default-temproot",
+            str(tmp_path),
         ],
         cwd=tmp_path,
         check=False,
         timeout=sp.LONG_TIMEOUT_SECONDS,
     )
     assert dict(os.environ) == parent_env
+
+
+def test_explicit_scratch_bypasses_main_checkout_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYTEST_DEBUG_TEMPROOT", str(tmp_path / "explicit"))
+    monkeypatch.delenv("REPO_SHARED_PYTEST_TEMPROOT", raising=False)
+    with (
+        patch.object(cli, "default_pytest_temproot", autospec=True) as locate,
+        patch.object(sp, "run", autospec=True) as run,
+    ):
+        run.return_value = subprocess.CompletedProcess([], 0)
+        assert cli._run_shared_tests(tmp_path).returncode == 0
+    locate.assert_not_called()
+    assert "--default-temproot" not in run.call_args.args[0]
 
 
 @pytest.mark.parametrize("verbose", [False, True])

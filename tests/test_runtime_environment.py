@@ -82,6 +82,7 @@ def test_startup_and_node_tools_do_not_write_compile_cache(
 def test_isolated_runner_supports_package_without_new_helpers(
     tmp_path: Path,
 ) -> None:
+    scratch = tmp_path / "scratch"
     package = tmp_path / "epilatow_repo_shared"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -95,13 +96,21 @@ def test_isolated_runner_supports_package_without_new_helpers(
         "    installed = Path(epilatow_repo_shared.__file__).parent\n"
         f"    assert str(installed) == {str(package)!r}\n"
         "    assert os.environ['NODE_DISABLE_COMPILE_CACHE'] == '1'\n"
+        f"    assert os.environ['PYTEST_DEBUG_TEMPROOT'] == {str(scratch)!r}\n"
     )
     environment = dict(os.environ)
+    environment.pop("PYTEST_DEBUG_TEMPROOT", None)
+    environment.pop("REPO_SHARED_PYTEST_TEMPROOT", None)
     environment.update(
         PYTHONPATH=str(tmp_path), NODE_DISABLE_COMPILE_CACHE="0"
     )
     result = subprocess.run(
-        [sys.executable, str(Path(shared_test_runner.__file__))],
+        [
+            sys.executable,
+            str(Path(shared_test_runner.__file__)),
+            "--default-temproot",
+            str(scratch),
+        ],
         cwd=tmp_path,
         env=environment,
         capture_output=True,
@@ -132,6 +141,8 @@ def test_pytest_main_restores_environment(
         "PYTEST_ADDOPTS",
         "PYTEST_PLUGINS",
         "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+        "PYTEST_DEBUG_TEMPROOT",
+        "REPO_SHARED_PYTEST_TEMPROOT",
     ):
         environment.pop(name, None)
     environment["NODE_DISABLE_COMPILE_CACHE"] = "0"
@@ -139,6 +150,8 @@ def test_pytest_main_restores_environment(
         "import os, pytest\n"
         "result = pytest.main(['-q', '--rootdir=.', 'test_probe.py'])\n"
         "assert os.environ['NODE_DISABLE_COMPILE_CACHE'] == '0'\n"
+        "assert 'PYTEST_DEBUG_TEMPROOT' not in os.environ\n"
+        "assert 'REPO_SHARED_PYTEST_TEMPROOT' not in os.environ\n"
         f"assert int(result) == {4 if startup_failure else 0}\n"
     )
     result = subprocess.run(

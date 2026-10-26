@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -30,6 +31,7 @@ from typing import Any
 
 from epilatow_repo_shared import sp
 from epilatow_repo_shared.exit_codes import ExitCode
+from epilatow_repo_shared.pytest_scratch import default_pytest_temproot
 from epilatow_repo_shared.vendor import (
     VENDOR_DIRNAME,
     VendorResult,
@@ -1690,6 +1692,16 @@ def _run_shared_tests(
         "python",
         str(Path(__file__).resolve().with_name("shared_test_runner.py")),
     ]
+    current = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+    if current is None or current == os.environ.get(
+        "REPO_SHARED_PYTEST_TEMPROOT"
+    ):
+        cmd.extend(
+            [
+                "--default-temproot",
+                str(default_pytest_temproot(repo_root, repo_root)),
+            ]
+        )
     if verbose:
         cmd.append("-v")
     print(f"running shared tests: {' '.join(cmd)}")

@@ -15,15 +15,30 @@ from pathlib import Path
 
 import pytest
 
+from epilatow_repo_shared.pytest_scratch import (
+    pytest_scratch as _configure_scratch,
+)
 from epilatow_repo_shared.runtime_environment import node_cache_disabled
 
 
 @pytest.hookimpl(tryfirst=True)
-def pytest_load_initial_conftests(early_config: pytest.Config) -> None:
+def pytest_load_initial_conftests(
+    early_config: pytest.Config, args: list[str]
+) -> None:
     """Apply tool policy before consumer conftests and configure hooks."""
     environment = ExitStack()
     early_config.add_cleanup(environment.close)
     environment.enter_context(node_cache_disabled())
+    options = args[: args.index("--")] if "--" in args else args
+    if any(
+        arg == "--basetemp" or arg.startswith("--basetemp=") for arg in options
+    ):
+        return
+    environment.enter_context(
+        _configure_scratch(
+            early_config.rootpath, early_config.invocation_params.dir
+        )
+    )
 
 
 @dataclass

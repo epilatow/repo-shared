@@ -257,6 +257,28 @@ accumulating compilation cache files in the system temporary directory.
 In-process pytest runs restore the caller's setting when they finish. Direct
 consumer commands outside these entry points must apply their own policy.
 
+Pytest's numbered temporary runs default to `<main-checkout>/tmp/pytest/`,
+including sessions launched from linked worktrees. Outside a Git checkout the
+default is `<invocation-directory>/tmp/pytest/`. This keeps test artifacts out
+of system temporary storage without changing `TMPDIR` for other tools. Nested
+sessions in another repository use that repository's default location. The
+default scratch parent also isolates nested uv projects from the enclosing
+checkout's workspace.
+
+If separate Git metadata has no main-checkout backlink and a linked worktree is
+outside its main checkout, set `PYTEST_DEBUG_TEMPROOT` explicitly. Such a
+layout does not give Git enough information to locate the main checkout; the
+default refuses to place scratch in the disposable worktree.
+
+Explicit `PYTEST_DEBUG_TEMPROOT` and `--basetemp` overrides remain honored.
+Pytest still owns concurrent run numbering, active-run locks, and retention:
+its default keeps three runs with `tmp_path_retention_policy = "all"`.
+Configure `tmp_path_retention_count` and `tmp_path_retention_policy` normally,
+for example `"failed"` to retain failure diagnostics while removing passing
+tests' `tmp_path` directories. Interrupted runs remain subject to pytest's
+native stale-lock timeout. The isolated runner uses the same default location
+even when the consumer is pinned to an older package.
+
 `upgrade` refuses on a dirty working tree, then does its work in a worktree at
 `<consumer>/.wt/repo-shared-update-<short>` on a branch
 `repo-shared/update-<short>` (deterministic per target SHA, so a re-run against

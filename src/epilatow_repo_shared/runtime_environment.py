@@ -3,8 +3,38 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from pathlib import Path
+
+_UV_BOUNDARY = '[tool.uv.workspace]\nmembers = []\nexclude = ["**"]\n'
+
+
+def prepare_scratch_parent(parent: Path) -> None:
+    """Keep nested uv fixtures outside their enclosing repo's workspace."""
+    parent.mkdir(parents=True, exist_ok=True)
+    boundary = parent / "pyproject.toml"
+    if boundary.exists():
+        if boundary.read_text(encoding="ascii") != _UV_BOUNDARY:
+            raise ValueError(
+                f"Unexpected pytest workspace boundary: {boundary}"
+            )
+        return
+    descriptor, name = tempfile.mkstemp(prefix=".uv-boundary-", dir=parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="ascii") as stream:
+            stream.write(_UV_BOUNDARY)
+        try:
+            os.link(temporary, boundary)
+        except FileExistsError:
+            if boundary.read_text(encoding="ascii") != _UV_BOUNDARY:
+                raise ValueError(
+                    f"Unexpected pytest workspace boundary: {boundary}"
+                ) from None
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def tool_environment(
@@ -17,15 +47,22 @@ def tool_environment(
 
 
 @contextmanager
-def node_cache_disabled() -> Iterator[None]:
-    """Apply the tool policy to descendants until the session closes."""
-    name = "NODE_DISABLE_COMPILE_CACHE"
-    previous = os.environ.get(name)
-    os.environ[name] = tool_environment()[name]
+def temporary_environment(values: Mapping[str, str]) -> Iterator[None]:
+    """Restore the overridden variables when a nested session finishes."""
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
     try:
         yield
     finally:
-        if previous is None:
-            os.environ.pop(name, None)
-        else:
-            os.environ[name] = previous
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+@contextmanager
+def node_cache_disabled() -> Iterator[None]:
+    """Apply the tool policy to descendants until the session closes."""
+    with temporary_environment({"NODE_DISABLE_COMPILE_CACHE": "1"}):
+        yield
