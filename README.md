@@ -19,11 +19,11 @@ instead: `git` won't follow a symlinked `.gitignore`, and Claude resolves
 customized.
 
 Every canonical path is expected to be in sync with its upstream -- a correct
-file symlink, or a byte-matching template copy. Unsafe parent paths and
-vendored destinations are also reported. `init` and `upgrade` return `ERROR`
-with exit code 4 and all reported conflicts. The delivered `test_in_sync.py`
-gates canonical paths on every test run. To carry your own version of a
-canonical leaf path, list it in `.repo-shared-ignore` -- see
+file symlink, or a byte-matching template copy. `init` and `upgrade` report
+every out-of-sync or unsafe path and exit 4 (`ERROR`), possibly after
+installing the other files. The delivered `test_in_sync.py` gates canonical
+paths on every test run. To carry your own version of a canonical leaf path,
+list it in `.repo-shared-ignore` -- see
 [Override mechanisms](#override-mechanisms) below.
 
 ### What lands in your repo
@@ -50,9 +50,10 @@ canonical leaf path, list it in `.repo-shared-ignore` -- see
 
 ### Agent Skills
 
-Portable [Agent Skills](https://agentskills.io/specification) use the existing
-dotfile installer. Claude adapters prefer the repository-local skill, then a
-home-directory copy where repository policy permits.
+The bundled skills are portable
+[Agent Skills](https://agentskills.io/specification). The Claude command
+adapters prefer the repository-local skill, then a home-directory copy where
+repository policy permits.
 
 Bundled skills:
 
@@ -78,75 +79,31 @@ markdown format + lint. Two smaller gates cover integration sanity -- that the
 consumer's vendored copy hasn't been hand-edited, and that the canonical paths
 still resolve to their upstreams.
 
-The delivered test files live under the consumer's vendored
-`_repo_shared/tests/` directory; init injects a `testpaths` entry into
-pyproject so pytest auto-discovers them. The vendored path is outside the
-consumer's `tests/` tree, so the consumer's `tests/conftest.py` doesn't leak
-into these tests:
+The delivered tests live in `_repo_shared/tests/`, outside your `tests/` tree,
+so your `tests/conftest.py` doesn't apply to them:
 
-- **`test_code_quality.py`** -- per-`.py` parametrize covering:
-
-  - **`ruff check`** -- lint.
-  - **`ruff format --check`** -- format.
-  - **`mypy --strict`** -- type check, with per-file `--with` deps resolved
-    from each file's PEP 723 `# /// script` block when present.
-
-  Discovers every tracked `.py` under the repo, plus a tracked-but-skip
-  post-filter that defaults to `_repo_shared/`. Adding a new module / test file
-  works without a pyproject edit -- discovery finds it on the next run.
-
-  `ruff check` / `ruff format --check` default to `--line-length=79` (matching
-  the `mdformat` prose wrap below) when the consumer hasn't pinned a value in
-  `ruff.toml` or `[tool.ruff]` of `pyproject.toml`. A consumer's explicit
-  setting always wins; the flag is suppressed in that case. No file is ever
-  written to the consumer to enforce this -- the delivered ruff invocation
-  passes the flag at runtime only when needed.
-
-  `ruff check` likewise injects the canonical lint categories
-  `["E", "F", "W", "I", "B", "UP", "ARG"]` via `--extend-select` when the
-  consumer hasn't declared its own `select`. The resulting baseline is the
-  pinned Ruff version's curated defaults plus those categories, including `ARG`
-  (flake8-unused-arguments) for unused function / method / lambda parameters. A
-  consumer that pins its own `select` takes full control and the injection is
-  suppressed; a consumer's `extend-select` adds further rules on top. A
-  config-file `ignore` / `extend-ignore` does not drop an injected rule (a
-  command-line `--extend-select` overrides config ignores), so a single
-  injected rule is silenced only with a per-line `noqa` or by pinning `select`.
-  As with line-length, nothing is written to the consumer -- the flag is passed
-  at runtime only when needed.
+- **`test_code_quality.py`** -- `ruff check`, `ruff format --check`, and
+  `mypy --strict` on every tracked `.py` file outside `_repo_shared/`. New
+  files are picked up without a pyproject edit. See
+  [Tool configs that aren't repo-shared knobs](#tool-configs-that-arent-repo-shared-knobs)
+  for the ruff defaults.
 
 - **`test_markdown_format.py`** -- `mdformat --check --wrap=79 --number` (with
-  the GFM and frontmatter plugins) across every markdown file in the repo. The
-  frontmatter plugin preserves metadata in entrypoints such as Agent Skills
-  `SKILL.md`. Catches drift in line wrap, table alignment, ordered-list
-  numbering, bullet markers, blank-line spacing, ...
+  the GFM and frontmatter plugins) across tracked and unignored markdown: line
+  wrap, table alignment, list numbering, bullet markers, blank-line spacing.
 
-- **`test_markdownlint.py`** -- `markdownlint-cli2` across the repo's markdown.
-  Catches the rules `mdformat` can't see: required fence languages, broken
-  anchor links, duplicate headings, missing image alt text, plus a custom rule
-  (`no-squashed-file-references`) that flags multiple Claude `@<path>` file
-  imports squashed onto one line -- the imports still expand when reflowed, but
-  the source goes opaque and any loader-specific dialect built on top
-  (line-by-line parsing) breaks outright. Like the other gates it discovers
-  files via `git ls-files` and feeds the explicit list to
-  `markdownlint-cli2 --no-globs`, so it never walks the tree (no `.venv` /
-  `.cache` traversal) and lints only the files git tracks or doesn't ignore
-  (`.gitignore` is honored). The
-  `[tool.repo-shared.markdown] extra-exclude-dirs` knob (the same knob the
-  mdformat gate reads) drops further paths -- `.gitignore`-pattern directories
-  or files -- from that list. `.markdownlint.json` still supplies the lint
-  rules and the custom rule. Fails -- not skips -- when `npx` is missing, so
-  the gate stays enforced everywhere; install Node per the Requirements
-  section.
+- **`test_markdownlint.py`** -- `markdownlint-cli2` across the same files, for
+  the rules `mdformat` can't see: required fence languages, broken anchor
+  links, duplicate headings, missing image alt text, and a custom
+  `no-squashed-file-references` rule against several Claude `@<path>` imports
+  on one line. Rules come from `.markdownlint.json`.
 
 Plus the two integration sanity checks:
 
 - **`test_repo_shared_drift.py`** -- catches local edits to the vendored
   `_repo_shared/` tree by comparing it against the SHA-pinned package version.
-- **`test_in_sync.py`** -- verifies canonical paths, including their parents.
-  `init` and `upgrade` also reject unsafe vendored destinations. They report
-  conflicts with `ERROR`; a canonical leaf conflict may be reported after other
-  files have been installed.
+- **`test_in_sync.py`** -- checks that every canonical path still matches its
+  upstream.
 
 The ruff, mypy, and mdformat versions are pinned in repo-shared's own
 `pyproject.toml` and ride along when the consumer pins repo-shared by SHA.
@@ -164,17 +121,13 @@ afterwards) handles onboarding, bumping the pinned SHA, and surfacing drift.
 A consumer needs the following installed on the dev / CI environment that runs
 the test suite:
 
-- **`uv`**: the test suite is `uv run pytest`. ruff, mypy, and mdformat are
-  `==`-pinned in repo-shared's own pyproject and uv resolves them into the
-  consumer's `uv.lock`.
+- **`uv`**: the test suite is `uv run pytest`.
 - **Node.js / `npx`**: required for `markdownlint-cli2`, which the
   `test_markdownlint.py` gate shells out to. Install via your package manager
   (`brew install node`, `apt install nodejs npm`, etc.). The gate fails -- not
   skips -- when `npx` is missing, so a Node-less CI surfaces the gap
   immediately rather than silently leaving markdownlint unenforced.
-- **Git**: `upgrade` does its work in a worktree under
-  `<consumer>/.wt/repo-shared-update-<short>` and `git push`-es from there on
-  `--push`.
+- **Git**: `upgrade` works in a worktree under `<consumer>/.wt/`.
 
 repo-shared supports Python `>=3.15,<3.16`. Before onboarding or upgrading an
 existing project, adjust its `requires-python` to a compatible range; these
@@ -199,11 +152,12 @@ cd ~/some-other-repo
 After init, your repo has:
 
 - `pyproject.toml` and `uv.lock` declaring `epilatow-repo-shared` as a dep
-  pinned to a SHA, with `_repo_shared/tests` added to
-  `[tool.pytest.ini_options] testpaths` so pytest picks up the shared tests on
-  the next `uv run pytest`. `init` creates `pyproject.toml` if you don't
-  already have one. A new project adopts repo-shared's Python requirement;
-  existing project requirements are preserved.
+  pinned to a SHA, with `_repo_shared/tests` appended to
+  `[tool.pytest.ini_options] testpaths`. If you had no `testpaths`, add your
+  own test directories to it, or `uv run pytest` collects only the shared
+  suite. `init` creates `pyproject.toml` if you don't already have one. A new
+  project adopts repo-shared's Python requirement; existing project
+  requirements are preserved.
 - `_repo_shared/` holding the vendored shared content (`files/`, `dotfiles/`,
   `templates/`, `dottemplates/`, `tests/`) plus the `_repo_shared/repo-shared`
   wrapper script you'll use for subsequent operations.
@@ -214,13 +168,9 @@ After init, your repo has:
 gitignored directory. Add the other generated files when committing the
 onboarding change.
 
-A bare `uv run pytest` collects both your own tests and the delivered shared
-suite (the injected `testpaths` entry covers both). The shared suite runs
-first. If any shared test fails, pytest finishes the shared suite and stops
-before executing your repo's tests; a green shared suite proceeds into the
-local tests normally. Pytest still collects the combined suite before either
-phase runs. To tune knobs (ruff / mypy targets, mdformat wrap, etc.), or to
-carry your own version of a canonical path, see
+A bare `uv run pytest` runs the delivered shared suite first and runs the rest
+of `testpaths` only if it passes. To tune knobs (ruff / mypy targets, mdformat
+wrap, etc.), or to carry your own version of a canonical path, see
 [Override mechanisms](#override-mechanisms) below.
 
 ## Updating a consumer
@@ -235,19 +185,9 @@ _repo_shared/repo-shared status             # show pinned SHA + any drift
 _repo_shared/repo-shared run-tests          # run just the delivered shared tests
 ```
 
-`status` ignores Python bytecode and tool cache directories under
-`_repo_shared/`; those are runtime artifacts, not vendored content drift.
-Unexpected non-cache files still surface as issues.
-
-`run-tests` runs the delivered gates in the consumer's pinned project
-environment. It isolates pytest from consumer configuration, startup plugins,
-`conftest.py` files, and plugin/options environment variables. Consumer
-`[tool.repo-shared.*]` settings and the lint/type-check tool configurations
-still apply. Consumer-specific preflights and dependency checks do not run, and
-no `npm ci` step is needed for the shared suite; Node/`npx` is still required
-for markdownlint. Pass `-v` for verbose pytest output. A direct
-`uv run pytest _repo_shared/tests` uses your normal pytest configuration and
-can therefore trigger consumer startup checks.
+`run-tests` runs only the delivered gates, isolated from your pytest
+configuration, plugins, and `conftest.py` files; your `[tool.repo-shared.*]`
+knobs and ruff / mypy configuration still apply. Pass `-v` for verbose output.
 
 With repo-shared installed, every pytest session -- yours included -- keeps its
 scratch in `<main-checkout>/tmp/pytest/`, also from linked worktrees
@@ -258,55 +198,40 @@ usual. Those sessions and repo-shared's tools also run with
 `NODE_DISABLE_COMPILE_CACHE=1`, overriding your environment, so disposable
 worktrees don't accumulate Node compilation caches.
 
-`upgrade` refuses on a dirty working tree, then does its work in a worktree at
-`<consumer>/.wt/repo-shared-update-<short>` on a branch
-`repo-shared/update-<short>` (deterministic per target SHA, so a re-run against
-the same target resumes a prior failed attempt rather than rebuilding). The
-resulting commit subject is
-`- repo-shared: upgrade from <prev-short> to <new-short>.` The commit includes
-newly delivered symlinks and removals of retired ones, even when their
-directories are gitignored by the consumer.
+`upgrade` refuses to run on a dirty working tree. It commits the bump on branch
+`repo-shared/update-<short>` (`<short>` is the target's short SHA) in a
+worktree at `<consumer>/.wt/repo-shared-update-<short>`, so rerunning against
+the same target resumes a failed attempt. Without `--push`, merge that branch
+yourself.
 
 Useful flags:
 
 - `--run-tests` runs the configured test command in the worktree after the
   bump. A non-zero exit aborts the upgrade and leaves the worktree for
-  inspection. The test command comes from `[tool.repo-shared] test-command` in
-  `pyproject.toml`; the default uses the same isolated shared-only runner as
-  `run-tests`. An explicit test command runs with the consumer's normal
-  environment and options; ensure any dependencies it needs are installed in
-  the update worktree. To exercise the consumer's own tests too:
+  inspection. The command comes from `[tool.repo-shared] test-command` in
+  `pyproject.toml` and defaults to the same shared-only run as `run-tests`. An
+  explicit command runs in your normal environment, so install whatever it
+  needs in the update worktree. To run your own tests too:
 
   ```toml
   [tool.repo-shared]
   test-command = "uv run pytest"
   ```
 
-  Bare `uv run pytest` (no path) reads `testpaths` from your pyproject -- which
-  init already populated with both your own tests dir and `_repo_shared/tests`
-  -- so the full suite runs.
-
-- `--push` implies `--run-tests`. On green, ff-merges the update branch into
-  your default branch and runs `git push`. Default cleanup deletes the worktree
-  and update branch after the push lands; pass `--keep-worktree` to retain
-  both. Before doing any upgrade work, `--push` probes the eventual push
-  outcome with `git push --dry-run` and bails if origin would reject -- a
-  missing credential or branch-protection rule fails immediately instead of
-  after a full setup + test cycle. A local-only consumer (no `origin` remote)
-  has nowhere to push, so `--push` there lands the ff-merge on your local
-  default branch and skips both the dry-run probe and the push.
+- `--push` implies `--run-tests`. On green it fast-forwards your default branch
+  to the update, pushes it, and removes the worktree and branch
+  (`--keep-worktree` keeps them). It runs `git push --dry-run` before any
+  upgrade work, so a rejected push fails fast. Without an `origin` remote it
+  fast-forwards your local default branch and skips the push.
 
 - `--force-retry` drops a prior update worktree that carries uncommitted
   changes and rebuilds fresh. Without it, dirty worktrees block the upgrade so
   debug edits aren't silently dropped.
 
-- `--base <ref>` builds the update worktree on top of `<ref>` instead of the
-  default base -- `origin/<default-branch>`, or the local `<default-branch>`
-  when there is no origin. Use it to base the upgrade on local work that isn't
-  pushed yet -- e.g. `--base main` (or `--base HEAD`) carries your unpushed
-  commits into the worktree, so the upgrade lands on top of them rather than on
-  the stale origin tip. The push target on `--push` stays your local default
-  branch either way (and with no origin there is no push -- see `--push`).
+- `--base <ref>` builds the update on `<ref>` instead of
+  `origin/<default-branch>` (or the local default branch when there is no
+  origin) -- e.g. `--base main` to land the upgrade on top of unpushed local
+  commits. `--push` still targets your local default branch.
 
 ## Override mechanisms
 
@@ -320,30 +245,14 @@ The delivered quality-gate tests read consumer-configured knobs from
 `[tool.repo-shared.<section>]` blocks in your `pyproject.toml`, so future
 repo-shared updates flow through without you having to touch the tests.
 
-The delivered `test_code_quality.py` discovers every tracked `.py` file under
-the repo, with a tracked-but-skip post-filter that defaults to `_repo_shared/`,
-and parametrizes ruff lint + ruff format + `mypy --strict` per file. New files
-are picked up with no pyproject edit. Optional knobs cover the cases discovery
-alone can't:
-
 ```toml
 [tool.repo-shared.code-quality]
-# Additive to auto-discovery: list explicit file paths for extension-less
-# shebang scripts (``bin/foo``, ``bin/bar``) that auto-discovery cannot
-# find on its own. Regular ``.py`` files do NOT need to be listed here.
+# Extension-less Python scripts (``bin/foo``) that discovery can't find.
+# Regular ``.py`` files do NOT need to be listed here.
 python-targets = ["bin/foo"]            # default []
 
-# Appended to the base discovery exclude set. Entries are
-# .gitignore patterns matched against repo-root-relative paths:
-# a bare name ("_build") prunes that directory anywhere in the
-# tree; a slash-containing entry ("docs/_build", "legacy/old.py")
-# is anchored at the repo root and may name a directory or an
-# exact file; "**/seq" matches at any depth; "a/**/b" spans
-# zero-or-more intermediate dirs. "!" negation is rejected -- the
-# knob is additive over the base excludes.
-# Use for tracked-but-skip paths that don't want lint /
-# type-checking -- code-gen output, vendored bundles you committed,
-# etc.
+# Tracked paths to skip -- code-gen output, committed vendored bundles.
+# .gitignore patterns relative to the repo root; "!" is rejected.
 extra-exclude-dirs = ["htmlcov", "docs/_build"]    # default []
 
 # Project-wide fallback for files WITHOUT their own PEP 723 ``# /// script``
@@ -354,24 +263,20 @@ mypy-python-version = "3.12"            # default unset; pins uvx --python
 
 [tool.repo-shared.markdown]
 wrap = 78                               # default 79
-# Appended to the base exclude set of BOTH markdown gates (mdformat
-# and markdownlint). Entries are .gitignore patterns matched
-# against repo-root-relative paths: a bare name prunes that
-# directory anywhere in the tree; a slash-containing entry is
-# anchored at the repo root and may name a directory or an exact
-# file; "**" forms match at any depth. "!" negation is rejected --
-# the knob is additive over the base excludes.
+# Paths both markdown gates skip; same pattern syntax as above.
 extra-exclude-dirs = ["build", "docs/generated.md"]    # default []
 ```
 
-For files that need their own mypy environment (e.g. an HA-coupled module file
-that needs `pytest-homeassistant-custom-component` resolvable for real
-`homeassistant.*` types), add a PEP 723 `# /// script` block as a top-level
-comment -- the test resolver reads it and spawns
-`uvx --python <X> --with <dep>... mypy --strict <file>` for just that file. The
-block may sit anywhere a top-level comment can (after the module docstring or
-imports, or in a shebang prelude), matching how uv locates it; right under the
-docstring is the convention here:
+`extra-exclude-dirs` adds to the shared default excludes; it never replaces
+them. Missing or wrong-typed settings fall back to the defaults; invalid
+patterns fail the gate.
+
+For a file that needs its own mypy environment (e.g. an HA-coupled module that
+needs `pytest-homeassistant-custom-component` for real `homeassistant.*`
+types), give it a PEP 723 `# /// script` block. The gate type-checks that file
+with the block's `requires-python` and `dependencies`. The block must be a
+top-level comment, and importing the module ignores it. By convention it sits
+right under the module docstring:
 
 ```python
 """HA-coupled module."""
@@ -386,31 +291,20 @@ docstring is the convention here:
 from __future__ import annotations
 ```
 
-PEP 723 is designed for shebang scripts but the block is just TOML inside a
-comment, so Python's import machinery ignores it at runtime; only mypy's
-per-file env reads it via the test resolver.
-
-`extra-exclude-dirs` (in both sections) always *appends* to the base default --
-never replaces -- so the shared baseline keeps applying after a repo-shared
-upgrade that grows the default list. Missing sections, missing keys, and
-malformed values all fall back to the documented defaults so a fresh consumer
-with no `[tool.repo-shared.*]` blocks behaves as documented.
-
 #### Tool configs that aren't repo-shared knobs
 
 A handful of tool settings live in your own config rather than under
 `[tool.repo-shared.*]`:
 
-- **ruff** rules + Python line-length: set `[tool.ruff]` in your own
-  `pyproject.toml` (e.g. `[tool.ruff] line-length = 79`,
-  `[tool.ruff.lint] select = ["E", "F", ...]`). ruff reads these natively. When
-  you don't pin `select`, the delivered gate keeps Ruff's pinned-version
-  defaults and injects the canonical categories
-  `["E", "F", "W", "I", "B", "UP", "ARG"]` via `--extend-select`; pinning your
-  own `select` suppresses the injection and you own the rule set entirely (add
-  `ARG` back if you want to keep unused-argument checking). `extend-select`
-  adds rules on top of that combined baseline; a config-file `ignore` does not
-  remove an injected rule (use a per-line `noqa`, or pin `select`).
+- **ruff** rules + Python line-length: set them in `[tool.ruff]` of
+  `pyproject.toml`, or in a `ruff.toml`, which replaces the pyproject settings;
+  ruff reads these natively. Unset values get repo-shared defaults on the
+  command line, with nothing written to your repo: `--line-length=79`, and,
+  unless you pin `select`, Ruff's defaults plus
+  `["E", "F", "W", "I", "B", "UP", "ARG"]` via `--extend-select`. Pinning
+  `select` hands you the whole rule set (add `ARG` back to keep unused-argument
+  checking); `extend-select` adds on top. A config-file `ignore` cannot remove
+  an injected rule -- use a per-line `noqa` or pin `select`.
 - **mypy** strictness toggles + module overrides: set `[tool.mypy]` and
   `[[tool.mypy.overrides]]` in your own `pyproject.toml`. The delivered test
   runs `mypy --strict` which respects this config.
@@ -442,6 +336,6 @@ skill's standard and Claude entrypoints, list their paths:
 .claude/commands/<name>.md
 ```
 
-Vendored files remain drift-checked. Suppressing a required skill entrypoint
-does not waive its workflow: the agent must stop unless higher-precedence
+Vendored files remain drift-checked. Suppressing a required skill's entrypoints
+does not waive its workflow: agents stop at that step unless higher-precedence
 repository instructions provide an authorized replacement.
