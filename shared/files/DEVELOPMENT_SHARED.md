@@ -154,9 +154,9 @@ pytest's native timeout.
   after the change and review fixes are settled. Use its normal defaults;
   enable additional gated suites only when relevant or explicitly requested.
 - Reuse passing results while the tested content, commands, and conditions
-  remain applicable. After a narrow fix, rerun affected checks. A new commit
-  hash alone does not require another full run; repeat the full suite only when
-  changes or conditions invalidate its coverage.
+  remain applicable. After a narrow fix or a base change, rerun affected
+  checks. A new commit hash alone does not require another full run; repeat the
+  full suite only when changes or conditions invalidate its coverage.
 
 ### Isolated test failures
 

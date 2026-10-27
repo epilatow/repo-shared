@@ -124,7 +124,4 @@ independent review. Do not write a persistent review report.
 If findings exist, leave this skill, fix them through the normal implementation
 workflow, amend or rebuild the owning commit, and rerun this entire audit
 against the replacement exact commit before starting post-change tests. A clean
-result satisfies only the implementer's completeness-audit step. After the
-green implementer-owned shared-and-focused gate, independent review must target
-that same exact commit. An unavailable independent review still blocks handoff
-under the repository instructions.
+result satisfies only the implementer's completeness-audit step.

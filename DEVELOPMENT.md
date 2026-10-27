@@ -84,11 +84,7 @@ uv run --extra test pytest tests/test_vendor.py # focused example
 uv run --extra test pytest                  # final full run before landing
 ```
 
-During development, combine the shared gates with tests focused on the changed
-behavior and its consumers. Run the full suite after development and review
-fixes are settled, before landing. Follow
-[Testing](DEVELOPMENT_SHARED.md#testing) for result reuse and isolated failure
-analysis; a qualifying non-regression flake does not require another full run.
+[Testing](DEVELOPMENT_SHARED.md#testing) says which to run when.
 
 The suite covers two layers, both picked up by `uv run pytest` via
 `[tool.pytest.ini_options] testpaths = ["tests", "shared/tests"]` in this

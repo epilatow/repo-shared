@@ -40,9 +40,8 @@ be observed and safely ended, report the mandatory gate as blocked.
 Require all of the following before spawning:
 
 - the candidate is a commit, not uncommitted work;
-- the implementer-owned repo-shared and focused checks are green on that exact
-  commit under DEVELOPMENT_SHARED.md's Testing policy; the final full suite
-  belongs to the landing stage, not each pre-review iteration;
+- the implementer-owned shared and focused checks are green on that exact
+  commit;
 - the candidate and tested commit resolve to the same full commit object ID;
 - the source checkout is attached to a branch; and
 - the current agent can create and later remove its own temporary branch and
@@ -91,8 +90,7 @@ and a stuck run using the repository's supervision rules. Silence alone is not
 a reason to cancel.
 
 The reviewer is read-only with respect to tracked files. It may inspect the
-whole tracked repository and run focused tests to substantiate a suspected
-finding, but it does not repeat the implementer's full suite.
+whole tracked repository and run focused tests.
 
 ## Capture and cleanup
 
@@ -117,5 +115,4 @@ create.
 
 After the reviewer returns, read and follow
 [finding disposition and re-review](references/finding-disposition.md) before
-acting on findings or later user feedback. A blocked or incomplete review does
-not permit completion, handoff, merge, or push.
+acting on findings or later user feedback.

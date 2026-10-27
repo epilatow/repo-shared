@@ -38,23 +38,18 @@ apply.
   authored-context audit, run repo-shared and focused checks relevant to the
   committed change, following [Testing](DEVELOPMENT_SHARED.md#testing). Use the
   repository-local `.agents/skills/repo-shared-run-commit-gates/SKILL.md` for
-  that exact commit. Review does not require an early full-suite run. Do not
-  give a reviewer a commit with red applicable gates.
+  that exact commit. Do not give a reviewer a commit with red applicable gates.
 - **Gate each new commit, not just the tip.** Run shared and focused checks on
-  every new commit in a stack with no later commits present; the final full
-  suite covers the settled tip before landing. For a previously green rewrite,
-  follow the rewrite skill's affected-commit and final-tip rule.
+  every new commit in a stack with no later commits present. For a rewrite,
+  follow the rewrite skill.
 - **An independent code review precedes handoff.** Once the gates are green,
   the implementing agent spawns the reviewer itself, unasked. An unreviewed
   branch is not ready to hand off as finished. See [Code review](#code-review).
 - **A green landing gate precedes every merge.** Run the full suite on the
-  settled candidate before landing. Reuse applicable passing results and rerun
-  affected checks after narrow fixes or base changes. Apply the isolated-test
-  failure policy in [Testing](DEVELOPMENT_SHARED.md#isolated-test-failures); a
-  qualifying non-regression flake is green without another full run. Record
-  which commits the evidence covers. Merge approval waives no gate. SHA changes
-  alone do not require re-review; follow the independent-review skill's
-  finding-disposition rules. Never merge first and test afterward.
+  settled candidate before landing, following
+  [Testing](DEVELOPMENT_SHARED.md#testing), and record which commits the
+  evidence covers. Merge approval waives no gate. Never merge first and test
+  afterward.
 - **Status reports follow the skill.** When the user asks for a development
   status report (short requests like "Status?" or "Status update?" count when
   development work is active), follow the repository-local
