@@ -35,6 +35,11 @@ from epilatow_repo_shared.python_quality import (
     validate_additional_targets,
 )
 
+# The Python sources in this module, here and inline in the tests below,
+# are input the code under test only reads: ruff, the PEP 723 parser,
+# and the file discovery and target validators. Nothing runs them, so
+# they stay inline as test data; several are deliberately broken, which
+# a gated fixture file could not be.
 _CLEAN_PY = '''"""Clean module."""
 
 
@@ -200,6 +205,7 @@ def test_run_ruff_format_check_passes_on_clean(tmp_path: Path) -> None:
     run_ruff_format_check(["clean.py"], cwd=tmp_path)
 
 
+# Test data too; see the note above ``_CLEAN_PY``.
 _PEP723_SCRIPT = '''\
 #!/usr/bin/env -S uv run --script
 # /// script

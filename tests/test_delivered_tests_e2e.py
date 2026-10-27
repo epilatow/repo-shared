@@ -150,7 +150,8 @@ def test_code_quality_rejects_lint_violation_in_consumer(
     _consumer: Path,
 ) -> None:
     # Unused import is an F401 violation under ruff's default ruleset --
-    # auto-discovery finds this .py file at the consumer root.
+    # auto-discovery finds this .py file at the consumer root. Only the
+    # gates read it and nothing runs it, so it stays inline as lint data.
     (_consumer / "lint_me.py").write_text("import sys\n")
     result = _pytest_in(_consumer, "_repo_shared/tests/test_code_quality.py")
     assert result.returncode != 0, (
@@ -202,6 +203,7 @@ def test_red_shared_phase_prevents_local_test_execution(
     _consumer: Path,
 ) -> None:
     marker = _plant_local_marker_test(_consumer)
+    # Lint data that turns the shared phase red; nothing runs it.
     (_consumer / "lint_me.py").write_text("import sys\n", encoding="utf-8")
 
     result = _pytest_in(_consumer, "tests", "_repo_shared/tests")
@@ -244,6 +246,8 @@ def test_run_tests_isolates_startup_and_preserves_gate_overrides(
         "python-targets = ['gate-probe']\n"
         "[tool.repo-shared.markdown]\nextra-exclude-dirs = ['EXCLUDED.md']\n"
     )
+    # ``gate-probe`` and ``unused.py`` are lint data for the delivered
+    # gates; nothing runs them, so they stay inline.
     (_consumer / "gate-probe").write_text("value = 1\n")
     (_consumer / "EXCLUDED.md").write_text("# heading\n\n\n\nbody   \n")
     (_consumer / "ruff.toml").write_text(
@@ -268,5 +272,6 @@ def test_run_tests_isolates_startup_and_preserves_gate_overrides(
     )
 
     # A broken gate must fail even when dotenv requests collection only.
+    # The broken ``gate-probe`` is lint data too, never run.
     (_consumer / "gate-probe").write_text("value =\n")
     assert cli.main(args) == ExitCode.WARNING

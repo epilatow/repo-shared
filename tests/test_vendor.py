@@ -37,6 +37,8 @@ def _make_synthetic_shared(root: Path) -> None:
     nested = files_dir / "_repo_shared"
     nested.mkdir()
     wrapper = nested / "repo-shared"
+    # Stands in for the vendored wrapper so vendoring has an executable
+    # file to place; nothing runs it, so it stays inline as test data.
     wrapper.write_text("#!/bin/bash\necho hi\n")
     os.chmod(wrapper, 0o755)
     (dotfiles_dir / "markdownlint.json").write_text("{}\n")
