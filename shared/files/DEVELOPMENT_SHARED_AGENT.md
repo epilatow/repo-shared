@@ -208,14 +208,28 @@ self-detaching tool launched without `setsid` and without capturing its
 PID-bearing output -- stop and ask the user rather than fall back to a
 resource-match query.
 
-## Doc-sync is non-negotiable
+## Update relevant docs
 
-The Doc-sync rule in `DEVELOPMENT_SHARED.md` is mandatory for every
-agent-authored commit. **Every code change is a potential doc change.** Before
-finalizing the commit message, grep the repo for any symbol, flag, convention,
-or behavior the diff touched -- CLI surfaces, helper APIs, naming rules, test
-layout, anything -- and update every doc that mentions it. If a doc references
-stale state, it's part of the bug, not separate from it.
+A change that affects what a doc tells its reader updates that doc in the same
+commit. Docs are part of the change, not a follow-up.
+
+A change has documentation impact when it:
+
+- makes an existing doc claim false -- a renamed or removed command, flag,
+  knob, path, or required step; or
+- adds a command, flag, knob, convention, or required step that a doc's reader
+  needs and cannot get from `--help` or an error message.
+
+An implementation detail is not documentation impact. Code changing is not a
+reason to add doc text. Document each fact once, in the doc whose reader needs
+it, and link to it elsewhere rather than restating it (see
+[Keep implementation details at the implementation](DEVELOPMENT_SHARED.md#keep-implementation-details-at-the-implementation)).
+`DEVELOPMENT_SHARED.md` and `DEVELOPMENT_SHARED_AGENT.md` hold cross-repo
+conventions, not the behavior of one repo's tools. Deleting doc text the change
+made obsolete is part of the update.
+
+To find the impact, grep the docs for each name the diff removes or whose
+meaning or behavior it changes, and fix what is now wrong.
 
 ## Finish the work everywhere it applies
 

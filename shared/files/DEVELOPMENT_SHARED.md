@@ -279,31 +279,6 @@ The test: if a comment or a doc paragraph describes behavior that lives in
 replace it with the contract the consumer can rely on instead of the mechanism
 the callee uses to deliver it.
 
-## Doc-sync rule
-
-**Documentation is part of the change, not a follow-up.** When code changes,
-every doc that describes that code changes in the same commit. No exceptions,
-no "I'll do the docs in a follow-up" -- doc and code commit together so
-reviewers see both at once.
-
-Before committing a code change, walk through every markdown file the change
-could touch and verify it still matches reality. Specifically:
-
-- `DEVELOPMENT.md` and `DEVELOPMENT_SHARED.md` -- update when dev-process
-  tooling changes (new test conventions, new lint rules, renamed or removed CLI
-  flags on a tool, new required steps in the develop / commit / test cycle).
-- `DEVELOPMENT_AGENT.md` and `DEVELOPMENT_SHARED_AGENT.md` -- update when
-  agent-specific workflow changes (review protocol, file markers, new
-  agent-only conventions).
-- Per-component / per-tool docs (where a component carries its own README or
-  `--help` text) -- update when its CLI surface, options, or behavior changes.
-
-Stale docs waste every reader's time -- users follow steps that no longer work,
-devs chase behaviors the code stopped doing. **Every code change is a potential
-doc change.** Before finalizing the commit message, grep the repo for any
-symbol, flag, convention, or behavior the diff touched and update every doc
-that mentions it.
-
 ## Commit messages
 
 - Use `- component: Summary of change.` format. Match what's already in

@@ -197,10 +197,14 @@ from a repo-shared maintainer's clone). A runtime guard in `_cmd_upgrade_tools`
 rejects invocation from outside a repo-shared clone even if a consumer somehow
 types the subcommand name.
 
-## Doc-sync
+## Where docs go
 
-Every change that adds, removes, or renames a CLI flag, public test base
-attribute, or shared-content path also updates the doc(s) that mention it.
-`README.md` documents onboarding + upgrade;
-`shared/files/DEVELOPMENT_SHARED.md` is consumed by every consumer (so a stale
-reference there propagates everywhere on the next bump).
+Apply [Update relevant docs](DEVELOPMENT_SHARED_AGENT.md#update-relevant-docs)
+with these readers in mind:
+
+- `README.md` -- consumers: what repo-shared delivers and how to onboard,
+  upgrade, and override it.
+- `DEVELOPMENT.md` -- repo-shared maintainers.
+- `shared/` -- vendored into every consumer. A doc line there reaches every
+  consumer on its next upgrade, so it holds conventions and procedures, not the
+  behavior of repo-shared's own tools.
