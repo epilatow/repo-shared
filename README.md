@@ -249,35 +249,14 @@ for markdownlint. Pass `-v` for verbose pytest output. A direct
 `uv run pytest _repo_shared/tests` uses your normal pytest configuration and
 can therefore trigger consumer startup checks.
 
-Shared tool subprocesses and pytest sessions disable Node's persistent module
-compilation cache with `NODE_DISABLE_COMPILE_CACHE=1`. The pytest policy takes
-effect before consumer conftests and configure hooks, and also applies to the
-isolated `run-tests` runner. This prevents disposable worktree paths from
-accumulating compilation cache files in the system temporary directory.
-In-process pytest runs restore the caller's setting when they finish. Direct
-consumer commands outside these entry points must apply their own policy.
-
-Pytest's numbered temporary runs default to `<main-checkout>/tmp/pytest/`,
-including sessions launched from linked worktrees. Outside a Git checkout the
-default is `<invocation-directory>/tmp/pytest/`. This keeps test artifacts out
-of system temporary storage without changing `TMPDIR` for other tools. Nested
-sessions in another repository use that repository's default location. The
-default scratch parent also isolates nested uv projects from the enclosing
-checkout's workspace.
-
-If separate Git metadata has no main-checkout backlink and a linked worktree is
-outside its main checkout, set `PYTEST_DEBUG_TEMPROOT` explicitly. Such a
-layout does not give Git enough information to locate the main checkout; the
-default refuses to place scratch in the disposable worktree.
-
-Explicit `PYTEST_DEBUG_TEMPROOT` and `--basetemp` overrides remain honored.
-Pytest still owns concurrent run numbering, active-run locks, and retention:
-its default keeps three runs with `tmp_path_retention_policy = "all"`.
-Configure `tmp_path_retention_count` and `tmp_path_retention_policy` normally,
-for example `"failed"` to retain failure diagnostics while removing passing
-tests' `tmp_path` directories. Interrupted runs remain subject to pytest's
-native stale-lock timeout. The isolated runner uses the same default location
-even when the consumer is pinned to an older package.
+With repo-shared installed, every pytest session -- yours included -- keeps its
+scratch in `<main-checkout>/tmp/pytest/`, also from linked worktrees
+(`./tmp/pytest/` outside Git), rather than system temporary storage. In your
+own pytest runs, `PYTEST_DEBUG_TEMPROOT`, `--basetemp`, and pytest's
+`tmp_path_retention_count` / `tmp_path_retention_policy` settings work as
+usual. Those sessions and repo-shared's tools also run with
+`NODE_DISABLE_COMPILE_CACHE=1`, overriding your environment, so disposable
+worktrees don't accumulate Node compilation caches.
 
 `upgrade` refuses on a dirty working tree, then does its work in a worktree at
 `<consumer>/.wt/repo-shared-update-<short>` on a branch

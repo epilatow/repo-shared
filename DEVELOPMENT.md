@@ -123,21 +123,6 @@ and lint/type-check configurations still apply. Explicit upgrade test commands
 and ordinary pytest invocations retain the consumer's pytest behavior. Cover
 both routes when changing the shared runner or upgrade test dispatch.
 
-`runtime_environment.py` owns the Node cache policy used by shared subprocess
-launches and early pytest startup. Tests must cover consumer startup hooks,
-real Node cache behavior, explicit child environments, and restoration after
-in-process sessions.
-
-`pytest_scratch.py` supplies the default scratch parent for ordinary pytest and
-isolated shared runs. Cover main and linked checkouts with separate Git
-metadata, nested repositories with natural configuration discovery, inherited
-defaults crossing repository boundaries, explicit overrides, concurrent
-numbered runs, native retention, and environment restoration. The isolated
-runner must use only its own CLI's sibling helpers: a newer CLI can execute it
-inside an older pinned package. It receives its default parent from the CLI
-after Git resolves the main checkout. Test uv fixture isolation so creating a
-nested project cannot change the enclosing checkout's workspace.
-
 ## Bumping pinned tool deps (ruff / mypy / mdformat)
 
 The shared test bases shell out to `python -m ruff` / `mypy` / `mdformat` from
