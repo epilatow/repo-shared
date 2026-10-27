@@ -39,8 +39,9 @@ Comments augment the code -- they don't repeat what the code is already doing.
 Use them to provide context, explain the why, document non-obvious requirements
 or side effects, or flag invariants the type system can't enforce.
 
-- Don't number steps in comments (`# 1. Parse state`). Numbering is unnecessary
-  and adding / removing steps requires renumbering.
+- Don't number steps in comments (`# 1. Parse state`), even for a canonical
+  pipeline: the named operation is its own label, and adding / removing steps
+  requires renumbering.
 - Don't reference user-reported bugs ("Regression guard for the user-reported
   bug where ..."). Describe what the code does and the constraint it enforces;
   bug history belongs in the commit message.
