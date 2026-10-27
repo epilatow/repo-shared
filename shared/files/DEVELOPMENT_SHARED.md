@@ -62,17 +62,14 @@ or side effects, or flag invariants the type system can't enforce.
 - Line wrap at 79 chars.
 - ruff and mypy compliant. Repos enforce this differently -- see the per-repo
   Testing section for how.
-- Unused function / method / lambda parameters are flagged (ruff's `ARG` rules,
-  part of the canonical default rule set). Remove a genuinely dead parameter;
-  for one that must stay (a callback signature, an interface override), mark it
-  unused at the signature -- prefix it with `_` (e.g. `_event`), or absorb it
-  in a `**_kwargs` catch-all when the caller passes it by keyword so its name
-  must stay. Never silence the check by `del`-ing the parameter in the body to
-  appease the linter; that hides the unused-ness from the signature and reads
-  as a deliberate deletion. A pytest fixture requested only for its side effect
-  can't be underscored -- pytest resolves fixtures by exact name -- so request
-  it with `@pytest.mark.usefixtures("name")` and drop the parameter, or
-  suppress the single line with `# noqa: ARG001`.
+- Unused function / method / lambda parameters are flagged (ruff's `ARG`
+  rules). Remove a dead parameter. For one that must stay (a callback
+  signature, an interface override), mark it unused at the signature: prefix it
+  with `_`, or absorb it in `**_kwargs` when callers pass it by keyword. Never
+  `del` it in the body to appease the linter; that hides the unused-ness from
+  the signature. A pytest fixture needed only for its side effect must keep its
+  name, so request it with `@pytest.mark.usefixtures("name")` and drop the
+  parameter, or suppress the single line with `# noqa: ARG001`.
 - Strongly typed. Don't use `Any` for a value this code inspects or accesses --
   model it with a `TypedDict`, dataclass, or pydantic model (a bare
   `Dict[str, Any]` standing in for structured data is the usual offender).
@@ -196,8 +193,7 @@ Two complementary tools enforce markdown style:
   `mdformat` can't see: required fence languages (MD040), broken anchor links
   (MD051), reference-link consistency (MD052 / MD053), missing alt text
   (MD045), duplicate headings (MD024), and similar. Config lives in
-  `.markdownlint.json` at the repo root. `~/.markdownlint.json` is a reasonable
-  starting point when adding markdownlint to a new repo.
+  `.markdownlint.json` at the repo root.
 
 The two tools agree on every mechanical rule by design. If they ever disagree,
 the formatter wins (it's mechanical) and `.markdownlint.json` gets adjusted to
@@ -276,11 +272,9 @@ the callee uses to deliver it.
 
 - Use `- component: Summary of change.` format. Match what's already in
   `git log`; the existing repo style is the source of truth.
-- Wrap the message body at about 72 columns. `git log` indents the body by four
-  spaces when it displays it, so a wider body overruns 80 columns in the log;
-  the subject stays short and on one line. Trailers are exempt: a trailer is
-  one unbreakable token-value pair, and folding it would break the parsers that
-  read it, so a long one is allowed to overrun.
+- Keep the subject short and on one line. Wrap the body at about 72 columns:
+  `git log` indents it four spaces, so a wider body overruns 80 columns. Never
+  wrap a trailer; each stays on one line however long.
 
 **Explain the why, not the what.** The diff already shows what changed. The
 commit message should give a future reader the context they can't derive from
@@ -291,33 +285,20 @@ you're almost certainly over-explaining.
 
 Specifically, do NOT include:
 
-- Lists of every file or call site touched. The diff enumerates them; if the
-  scope is "every site of pattern X", say so once. This applies to any prefix
-  variant -- `Touched:`, `Files changed:`, `Affected:`, `Sites:`, etc. -- which
-  is just the same list with a label.
-- Test inputs, fixture values, or the specific bad-shape cases a regression
-  test exercises. The test code is the source of truth.
-- Sub-decisions that are obvious from the code (which field type was used,
-  which helper the code now calls, how a loop is structured).
-- Restatements of points already in an earlier paragraph of the same message.
-- References to symbols, tests, functions, or files that the same diff
-  *removes* or replaces. A subject like "Replaces the per-utility
-  `_FooHelper.bar` with a generic base" is a trap: future readers grep for the
-  named symbol and find nothing because the same commit deleted it. State the
-  new artifact on its own terms; the diff already shows the deletion.
-- Pointers to ephemeral scratch -- "the followup notes ...", "the
-  tmp/<slug>-... scope", "as discussed in the earlier review", "the plan put X
-  in Y". `tmp/` files, code-review threads, and review inputs are working state
-  that does not survive in `git log`. If a constraint matters, restate it
-  inline; if it's just a paper trail, drop it.
-- Transient, machine-local, or private handles -- API keys, machine hostnames,
-  local filesystem paths, URLs into a private tracker or chat. A commit message
-  is a permanent record, world-readable on a public repo, while those handles
-  mean nothing to a later reader who cannot resolve them anyway. The test is
-  whether a stranger reading the commit years from now can still follow it, so
-  durable public references stay fine: an issue reference against this repo's
-  tracker (`Fixes #1234`), a link to a public upstream bug, and the authorship
-  trailers (`Co-Authored-By:`, `Signed-off-by:`, `Reported-by:`) that credit a
-  commit's contributors.
+- Lists of the files or call sites touched, under any label (`Touched:`,
+  `Files changed:`, ...). If the scope is "every site of pattern X", say so
+  once.
+- Test inputs, fixture values, or the bad-shape cases a regression test
+  exercises; the test is the source of truth.
+- Sub-decisions obvious from the code, or restatements of an earlier paragraph.
+- Symbols, tests, or files the same diff removes or replaces. A reader who
+  greps for them finds nothing; describe the new artifact on its own terms.
+- Pointers to ephemeral scratch -- `tmp/` files, review threads, "the plan".
+  They do not survive in `git log`; if a constraint matters, restate it.
+- Transient, machine-local, or private handles -- API keys, hostnames, local
+  paths, private tracker or chat URLs. A commit message is a permanent record,
+  world-readable on a public repo, and a stranger must be able to follow it
+  years from now. Issue references against this repo's tracker (`Fixes #1234`),
+  public upstream bug links, and authorship trailers stay.
 
 [dclint]: https://github.com/zavoloklom/docker-compose-linter
