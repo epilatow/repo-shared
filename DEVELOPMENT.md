@@ -8,73 +8,25 @@ file takes precedence over `DEVELOPMENT_SHARED.md` on conflict.**
 
 ## Repo layout
 
-Two top-level concerns:
-
-- `shared/` is the upstream content that gets vendored into consumer repos. It
-  has different kinds, each handled by `vendor.py`'s `iter_shared` /
-  `consumer_paths`:
-  - `shared/files/` -> vendored at `_repo_shared/files/` PLUS canonical-path
-    symlinks at the consumer root (`DEVELOPMENT_SHARED.md`,
-    `_repo_shared/repo-shared`, ...).
-  - `shared/dotfiles/` -> vendored at `_repo_shared/dotfiles/` PLUS
-    dot-prefixed canonical-path symlinks (`.markdownlint.json`,
-    `.markdownlint-cli2.jsonc`, `.agents/skills/<name>/...`, ...). Agent Skills
-    use this generic file mapping; the installer does not treat a skill package
-    as a separate shared kind. `init` stages the symlinks, and `upgrade` stages
-    delivered and removed paths explicitly, even beneath directories ignored by
-    the consumer's Git rules. Nested canonical destinations are rejected when
-    any parent is a symlink or non-directory, so installation and stale cleanup
-    cannot traverse a consumer-owned parent into another tree. Vendored
-    destinations receive the same preflight before any file is written.
-  - `shared/templates/` and `shared/dottemplates/` -> vendored at
-    `_repo_shared/<kind>/` PLUS a canonical-path *copy* (not a symlink) that
-    `vendor()` seeds when the consumer has no file there. On a later `upgrade`
-    the copy is refreshed to the new upstream only while it still byte-matches
-    the *old* upstream (the previous vendored content) -- so a repo that never
-    customizes the file keeps getting the latest version, while a customized
-    copy is left untouched. Used for files the consumer must own a real copy
-    of: `gitignore` (`git` won't follow a symlinked `.gitignore`) and
-    `CLAUDE.md` (Claude resolves `@`-includes relative to the file's real
-    on-disk location, so a symlinked `CLAUDE.md` would resolve its includes
-    against the vendor dir). The delivered `test_in_sync.py` gates each copy
-    against its upstream so a customized copy can't silently fall behind
-    unnoticed; `init` / `upgrade` enforce the same invariant up front via
-    `check_in_sync` and abort with ERROR on any out-of-sync entry. A consumer
-    that wants its own version lists the path in `.repo-shared-ignore`, which
-    exempts it from the seed, the auto-update, and the sync check. The vendored
-    copy under `_repo_shared/<kind>/` still backs the drift gate.
-  - `shared/tests/` -> vendored at `_repo_shared/tests/` with NO canonical-path
-    symlinks. The delivered test files (`test_code_quality.py`,
-    `test_markdown_format.py`, `test_markdownlint.py`,
-    `test_repo_shared_drift.py`, `test_in_sync.py`) live solely at their
-    vendored path; pytest finds them via the `testpaths` entry that
-    `_inject_shared_testpaths` appends to the consumer's
-    `[tool.pytest.ini_options]`. The installed repo-shared pytest plugin orders
-    shared tests before consumer tests and ends the session at that boundary
-    when a shared test failed. This puts the shared tests on a separate
-    ancestor chain from the consumer's `tests/conftest.py`, so a heavy consumer
-    conftest can't leak into the delivered tests.
+- `shared/` is the upstream content vendored into consumers at
+  `_repo_shared/<kind>/`. `vendor.py` maps each kind to its consumer paths,
+  with a leading dot on the first path segment for the `dot` kinds:
+  - `shared/files/` and `shared/dotfiles/` -> canonical-path symlinks at the
+    consumer root. Agent Skills are ordinary `dotfiles` entries.
+  - `shared/templates/` and `shared/dottemplates/` -> real-file copies, for the
+    reasons in README's [Docs and configs](README.md#docs-and-configs).
+  - `shared/tests/` -> no canonical path. Consumers reach the delivered gates
+    through an injected `testpaths` entry, which keeps them off the consumer's
+    `tests/conftest.py` chain.
 - `src/epilatow_repo_shared/` is the Python package. It ships `shared/` as
-  package data so the CLI's vendor logic and the drift tests can read the
-  canonical content directly via `importlib.resources`.
+  package data for the CLI and the delivered gates.
 
-The repo's own root-level files dogfood the same mechanism: the symlinked kinds
-(`DEVELOPMENT_SHARED.md`, `.markdownlint.json`, and files below
-`.agents/skills/` and `.claude/commands/`) are symlinks into `shared/`, while
-`CLAUDE.md` and `.gitignore` are real committed copies of their
-`shared/templates/` / `shared/dottemplates/` upstreams. Editing a symlinked
-upstream under `shared/` updates the repo-local view as a side effect; the
-template copies are independent committed files, gated against their upstreams
-by the delivered `test_in_sync.py` -- `InSyncBase` calls `check_in_sync`
-against `package_shared_root()`, which resolves to the live `shared/` here, so
-repo-shared dogfoods the same check every consumer runs.
-
-Repo-local files that are NOT shared (`README.md`, this file) are real files at
-the root. `DEVELOPMENT.md` is also a real file -- the `shared/files/` upstream
-is a placeholder template -- so the repo's own `.repo-shared-ignore` lists it
-to opt the canonical path out of the in-sync gate. `DEVELOPMENT_AGENT.md` keeps
-the symlink to the shared placeholder since this repo has no agent-only
-specifics worth promoting to a real file.
+This repo uses the same layout on itself: its canonical symlinks point into
+`shared/`, and its `CLAUDE.md` and `.gitignore` are committed copies that the
+delivered `test_in_sync.py` checks against `shared/`, so editing either
+template means editing its root copy too. `README.md` and this file are
+repo-local. `.repo-shared-ignore` lists `DEVELOPMENT.md` because its shared
+upstream is only a placeholder.
 
 ## Testing
 
@@ -84,44 +36,19 @@ uv run --extra test pytest tests/test_vendor.py # focused example
 uv run --extra test pytest                  # final full run before landing
 ```
 
-[Testing](DEVELOPMENT_SHARED.md#testing) says which to run when.
+[Testing](DEVELOPMENT_SHARED.md#testing) says which to run when. `testpaths`
+covers both layers:
 
-The suite covers two layers, both picked up by `uv run pytest` via
-`[tool.pytest.ini_options] testpaths = ["tests", "shared/tests"]` in this
-repo's `pyproject.toml`:
+- The repo's own unit, integration, and end-to-end tests under `tests/`.
+- The delivered gates under `shared/tests/`, the same files consumers run, with
+  no `[tool.repo-shared.*]` overrides, so this repo exercises the defaults a
+  fresh consumer gets. A regression in the delivered test surface shows up here
+  first. The drift gate skips here because this repo is the source.
 
-- Unit tests under `tests/test_<module>.py` for each Python module.
-
-- The delivered tests at `shared/tests/test_*.py` -- the same files every
-  consumer runs (vendored into the consumer at `_repo_shared/tests/` by
-  `vendor()`). The repo's own targets for those tests are declared in
-  `[tool.repo-shared.code-quality]` in `pyproject.toml`, exactly the same
-  mechanism consumers use. A regression in the delivered test surface (e.g. a
-  removed class attribute, a misbehaving `[tool.repo-shared.code-quality]`
-  loader) shows up here first.
-
-  `src/epilatow_repo_shared/pytest_plugin.py` makes this layer an execution
-  gate in combined pytest sessions. It moves all shared items ahead of
-  consumer-owned items, lets every shared item report, then sets pytest's
-  session failure at the boundary if any shared item failed. Consumer tests
-  therefore execute only after the complete shared layer is green. Collection
-  remains session-wide, so consumer tests are still collected before execution
-  begins.
-
-  `test_repo_shared_drift.py` is included in the run alongside the others but
-  `VendorDriftBase` calls `_is_repo_shared_source_root(consumer_root)` and
-  `pytest.skip`s when that's true -- repo-shared itself has no vendored
-  `_repo_shared/` (it *is* the source), so the byte-compare would fail
-  spuriously here. A misbehaving consumer that's missing `_repo_shared/` is not
-  the source repo and still fails the check.
-
-Both layers run from `uv run --extra test pytest`. No global pip installs.
-
-Consumer `run-tests` and default upgrade validation run only the delivered
-gates in isolation from consumer pytest startup behavior. Their gate overrides
-and lint/type-check configurations still apply. Explicit upgrade test commands
-and ordinary pytest invocations retain the consumer's pytest behavior. Cover
-both routes when changing the shared runner or upgrade test dispatch.
+Consumer `run-tests` and default upgrade validation run the delivered gates
+isolated from consumer pytest startup; explicit upgrade test commands and
+ordinary pytest runs do not. Cover both routes when changing the shared runner
+or upgrade test dispatch.
 
 ## Bumping pinned tool deps (ruff / mypy / mdformat)
 
@@ -138,45 +65,25 @@ bin/repo-shared upgrade-tools --only ruff # bump just one
 bin/repo-shared upgrade-tools --push      # bump + commit; test + push on green
 ```
 
-`upgrade-tools` queries PyPI for each `==`-pinned dep, then does the bump work
-in a worktree at `<repo-shared>/.wt/repo-shared-tool-bump-<hash>` (mirroring
-the consumer-side `upgrade`). `<hash>` is a sha256 prefix of the target version
-set, so the same set of target versions deterministically lands on the same
-branch -- a re-run after a red test resumes the existing worktree instead of
-rebuilding. The worktree branch is `repo-shared/tool-bump-<hash>` off
-`origin/<default>`, applies all available bumps to `pyproject.toml`, runs
-`uv lock`, commits the bump, and runs the dogfood subset
-(`uv run --locked --extra test pytest shared/tests`). The locked run refuses to
-update `uv.lock`, so the committed candidate is exactly what dogfood tests. On
-a red test run the clean, committed worktree is left in place so the maintainer
-can `cd` in and debug, and the next run can test it again. With `--push`, only
-a green bump branch ff-merges into the maintainer's default branch and pushes;
-`--keep-worktree` retains the worktree after push. `git push --dry-run` runs
-before any bump work so an upstream rejection fails fast.
+`upgrade-tools` commits the bump in a worktree under
+`<repo-shared>/.wt/repo-shared-tool-bump-<hash>`, named for the target versions
+so a rerun after a red test resumes it, and runs `shared/tests` with `--locked`
+so what is tested is exactly what was committed. A red run leaves the committed
+worktree for debugging. `--push` lands and pushes only a green bump and checks
+`git push --dry-run` first.
 
-The dogfood is scoped to `shared/tests` -- the quality gates that actually
-exercise the bumped ruff / mypy / mdformat against every tracked file -- rather
-than the full `uv run --extra test pytest`. The full suite additionally drives
-the CLI integration tests under `tests/`, each of which spawns a nested
-`upgrade` / `upgrade-tools` that builds a venv and runs its own dogfood; that
-nesting is redundant for validating a tool bump and slow enough under
-contention to exhaust the subprocess timeout.
+That test run covers `shared/tests` -- the gates that exercise the bumped tools
+-- rather than the full suite, because each CLI integration test under `tests/`
+spawns a nested upgrade with its own venv and dogfood run: redundant for a tool
+bump, and slow enough under contention to hit the subprocess timeout.
 
-When `uv lock` rejects the full bump set -- for example, a tool's new major
-release conflicts with a plugin's requirements -- the resolver falls back to a
-per-pin sweep in pyproject order. Each bump is kept iff it locks together with
-the already-accepted set, and dropped otherwise. Dropped pins are reported as
-`skipped (conflict): <name> <old> -> <new>` and the non-conflicting bumps still
-land in the commit. If every candidate conflicts, the worktree + branch are
-removed and the run exits cleanly -- there's nothing the maintainer can do
-until the blocking upstream catches up, and nightly automation should shrug at
-the situation rather than page.
+If the bumps won't all lock together, conflicting pins are skipped and reported
+and the rest land. If none can land, the run exits cleanly without a commit:
+nothing can be done until the upstream catches up, so nightly automation
+shouldn't page.
 
-The subcommand is hidden from the consumer-shipped `--help` output (the same
-CLI module ships in every consumer's venv, but the subcommand only makes sense
-from a repo-shared maintainer's clone). A runtime guard in `_cmd_upgrade_tools`
-rejects invocation from outside a repo-shared clone even if a consumer somehow
-types the subcommand name.
+`upgrade-tools` is hidden from consumers' `--help` and refuses to run outside a
+repo-shared clone.
 
 ## Where docs go
 
