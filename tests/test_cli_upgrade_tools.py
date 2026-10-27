@@ -20,31 +20,18 @@ into ``shared/tests/``, where the scoped dogfood will run it.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from conftest import FIXTURES
 
 from epilatow_repo_shared import cli
 from epilatow_repo_shared.exit_codes import ExitCode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SMOKE_TEST = """\
-def test_smoke_in_worktree_dogfood() -> None:
-    assert True
-"""
-# Dropped into the clone's ``shared/tests/`` for the dogfood-failure
-# case. ``test_code_quality`` also lints / type-checks this file, so it
-# must stay ruff- and mypy-clean: the integration test relies on the
-# dogfood going red on the deliberate ``AssertionError``, not on a
-# spurious quality-gate failure.
-FAILING_TEST = """\
-def test_deliberately_failing_dogfood_test() -> None:
-    # Used by an integration test to assert that a failing dogfood
-    # leaves the bump worktree in place for the maintainer to inspect.
-    raise AssertionError("deliberate failure for integration test")
-"""
 
 
 def _git_in(repo: Path, *args: str) -> None:
@@ -105,10 +92,10 @@ def _build_fake_clone(
             subprocess.run(["rm", "-rf", str(child)], check=True)
         else:
             child.unlink()
-    (tests_dir / "test_smoke.py").write_text(SMOKE_TEST)
+    shutil.copyfile(FIXTURES / "dogfood_smoke.py", tests_dir / "test_smoke.py")
     if dogfood_failure:
         fail_path = clone / "shared" / "tests" / "test_deliberate_failure.py"
-        fail_path.write_text(FAILING_TEST)
+        shutil.copyfile(FIXTURES / "dogfood_failure.py", fail_path)
 
     if pin_overrides:
         pyproject = clone / "pyproject.toml"

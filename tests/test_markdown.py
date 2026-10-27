@@ -119,13 +119,9 @@ def test_walk_markdown_honors_gitignore(tmp_path: Path) -> None:
 
 
 def _ensure_mdformat() -> None:
-    result = subprocess.run(
-        [sys.executable, "-c", "import mdformat"],
-        capture_output=True,
-        check=False,
+    pytest.importorskip(
+        "mdformat", reason="mdformat not importable in test env"
     )
-    if result.returncode != 0:
-        pytest.skip("mdformat not importable in test env")
 
 
 def test_mdformat_check_passes_on_clean_tree(tmp_path: Path) -> None:

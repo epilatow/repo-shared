@@ -9,6 +9,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Programs the tests write out and run: probes, conftest files, and
+# stand-in suites, kept as real files, where the quality gates check
+# the Python ones.
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
 
 def git_init_repo(repo: Path) -> None:
     """``git init`` ``repo`` with a stable user identity.

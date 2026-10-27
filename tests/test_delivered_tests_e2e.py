@@ -35,6 +35,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import FIXTURES
 
 # Reuse the fake-source builder from the upgrade integration tests so a
 # regression in one path doesn't go undetected here. The helper is
@@ -109,11 +110,8 @@ def _plant_local_marker_test(consumer: Path) -> Path:
     tests_dir = consumer / "tests"
     tests_dir.mkdir()
     marker = consumer / "local-suite-ran"
-    (tests_dir / "test_local.py").write_text(
-        "from pathlib import Path\n\n\n"
-        "def test_local_suite_runs() -> None:\n"
-        '    Path("local-suite-ran").write_text("yes", encoding="utf-8")\n',
-        encoding="utf-8",
+    shutil.copyfile(
+        FIXTURES / "local_suite_probe.py", tests_dir / "test_local.py"
     )
     return marker
 

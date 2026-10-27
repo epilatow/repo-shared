@@ -20,6 +20,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import FIXTURES
 
 from epilatow_repo_shared import cli
 from epilatow_repo_shared.exit_codes import ExitCode
@@ -1094,9 +1095,9 @@ def test_upgrade_commits_removal_inside_ignored_directory(
 
 def _plant_consumer_startup_traps(consumer: Path) -> None:
     """Add startup hooks that fail unless pytest is isolated from them."""
-    trap = 'raise RuntimeError("consumer startup needs local npm tools")\n'
-    (consumer / "consumer_startup_trap.py").write_text(trap)
-    (consumer / "conftest.py").write_text(trap)
+    trap = FIXTURES / "consumer_startup_trap.py"
+    shutil.copyfile(trap, consumer / "consumer_startup_trap.py")
+    shutil.copyfile(trap, consumer / "conftest.py")
     metadata = consumer / "consumer_startup_hook-0.0.dist-info"
     metadata.mkdir()
     (metadata / "METADATA").write_text(

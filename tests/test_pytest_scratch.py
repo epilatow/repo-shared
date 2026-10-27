@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import pytest
-from conftest import git_init_repo
+from conftest import FIXTURES, git_init_repo
 
 from epilatow_repo_shared import shared_test_runner
 from epilatow_repo_shared.pytest_scratch import (
@@ -50,21 +51,7 @@ def _probe_repo(repo: Path, metadata: Path | None = None) -> Path:
     tests = repo / "_repo_shared" / "tests"
     tests.mkdir(parents=True)
     (repo / ".gitignore").write_text("tmp/\n.wt/\n")
-    (tests / "test_probe.py").write_text(
-        "import json, os\n"
-        "from pathlib import Path\n\n"
-        "def test_probe(tmp_path, tmp_path_factory, pytestconfig):\n"
-        "    (tmp_path / 'marker').write_text('kept')\n"
-        "    record = {\n"
-        "        'base': str(tmp_path_factory.getbasetemp()),\n"
-        "        'path': str(tmp_path),\n"
-        "        'policy': pytestconfig.getini('tmp_path_retention_policy'),\n"
-        "        'count': int(pytestconfig.getini(\n"
-        "            'tmp_path_retention_count')),\n"
-        "    }\n"
-        "    Path(os.environ['PROBE_RECORD']).write_text(json.dumps(record))\n"
-        "    assert os.environ.get('PROBE_FAIL') != '1'\n"
-    )
+    shutil.copyfile(FIXTURES / "scratch_probe.py", tests / "test_probe.py")
     _git(repo, "add", ".gitignore", "_repo_shared/tests/test_probe.py")
     _git(repo, "commit", "-qm", "test fixture")
     return repo

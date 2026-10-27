@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import FIXTURES
 
 from epilatow_repo_shared import shared_test_runner
 from epilatow_repo_shared.runtime_environment import node_cache_disabled
@@ -37,21 +38,13 @@ def test_startup_and_node_tools_do_not_write_compile_cache(
         pytest.skip("Node is needed to exercise its real compile cache")
     test_dir = tmp_path / ("_repo_shared/tests" if isolated else "tests")
     test_dir.mkdir(parents=True)
-    (test_dir / "test_probe.py").write_text(
-        "import os\n"
-        "import subprocess\n\n"
-        "def test_node_cache():\n"
-        "    assert os.environ['NODE_DISABLE_COMPILE_CACHE'] == '1'\n"
-        f"    subprocess.run([{node!r}, '-e', "
-        "\"require('node:module').enableCompileCache?.(); "
-        "require('./probe.cjs')\"], check=True)\n"
+    shutil.copyfile(
+        FIXTURES / "node_cache_probe.py", test_dir / "test_probe.py"
     )
-    (tmp_path / "probe.cjs").write_text("module.exports = 42;\n")
-    (test_dir / "conftest.py").write_text(
-        "import os\n"
-        "assert os.environ['NODE_DISABLE_COMPILE_CACHE'] == '1'\n"
-        "def pytest_configure():\n"
-        "    assert os.environ['NODE_DISABLE_COMPILE_CACHE'] == '1'\n"
+    for script in ("node_cache_probe.cjs", "node_cache_module.cjs"):
+        shutil.copyfile(FIXTURES / script, tmp_path / script)
+    shutil.copyfile(
+        FIXTURES / "node_cache_conftest.py", test_dir / "conftest.py"
     )
     cache = tmp_path / "compile-cache"
     environment = dict(os.environ)
@@ -59,7 +52,9 @@ def test_startup_and_node_tools_do_not_write_compile_cache(
     environment.pop("PYTEST_PLUGINS", None)
     environment.pop("PYTEST_DISABLE_PLUGIN_AUTOLOAD", None)
     environment.update(
-        NODE_DISABLE_COMPILE_CACHE="0", NODE_COMPILE_CACHE=str(cache)
+        NODE_DISABLE_COMPILE_CACHE="0",
+        NODE_COMPILE_CACHE=str(cache),
+        PROBE_NODE=node,
     )
     command = (
         [sys.executable, str(Path(shared_test_runner.__file__))]
@@ -88,21 +83,17 @@ def test_isolated_runner_supports_package_without_new_helpers(
     (package / "__init__.py").write_text("")
     tests = tmp_path / "_repo_shared" / "tests"
     tests.mkdir(parents=True)
-    (tests / "test_probe.py").write_text(
-        "import os\n"
-        "import epilatow_repo_shared\n"
-        "from pathlib import Path\n\n"
-        "def test_older_package():\n"
-        "    installed = Path(epilatow_repo_shared.__file__).parent\n"
-        f"    assert str(installed) == {str(package)!r}\n"
-        "    assert os.environ['NODE_DISABLE_COMPILE_CACHE'] == '1'\n"
-        f"    assert os.environ['PYTEST_DEBUG_TEMPROOT'] == {str(scratch)!r}\n"
+    shutil.copyfile(
+        FIXTURES / "older_package_probe.py", tests / "test_probe.py"
     )
     environment = dict(os.environ)
     environment.pop("PYTEST_DEBUG_TEMPROOT", None)
     environment.pop("REPO_SHARED_PYTEST_TEMPROOT", None)
     environment.update(
-        PYTHONPATH=str(tmp_path), NODE_DISABLE_COMPILE_CACHE="0"
+        PYTHONPATH=str(tmp_path),
+        NODE_DISABLE_COMPILE_CACHE="0",
+        PROBE_PACKAGE=str(package),
+        PROBE_SCRATCH=str(scratch),
     )
     result = subprocess.run(
         [
@@ -125,17 +116,15 @@ def test_isolated_runner_supports_package_without_new_helpers(
 def test_pytest_main_restores_environment(
     tmp_path: Path, startup_failure: bool
 ) -> None:
-    (tmp_path / "test_probe.py").write_text(
-        "import os\n\n"
-        "def test_policy():\n"
-        "    assert os.environ['NODE_DISABLE_COMPILE_CACHE'] == '1'\n"
+    shutil.copyfile(
+        FIXTURES / "node_policy_probe.py", tmp_path / "test_probe.py"
     )
     if startup_failure:
-        (tmp_path / "conftest.py").write_text(
-            "import os\n"
-            "assert os.environ['NODE_DISABLE_COMPILE_CACHE'] == '1'\n"
-            "raise RuntimeError('startup failed')\n"
+        shutil.copyfile(
+            FIXTURES / "startup_failure_conftest.py", tmp_path / "conftest.py"
         )
+    driver = tmp_path / "pytest_main_driver.py"
+    shutil.copyfile(FIXTURES / "pytest_main_driver.py", driver)
     environment = dict(os.environ)
     for name in (
         "PYTEST_ADDOPTS",
@@ -146,16 +135,9 @@ def test_pytest_main_restores_environment(
     ):
         environment.pop(name, None)
     environment["NODE_DISABLE_COMPILE_CACHE"] = "0"
-    code = (
-        "import os, pytest\n"
-        "result = pytest.main(['-q', '--rootdir=.', 'test_probe.py'])\n"
-        "assert os.environ['NODE_DISABLE_COMPILE_CACHE'] == '0'\n"
-        "assert 'PYTEST_DEBUG_TEMPROOT' not in os.environ\n"
-        "assert 'REPO_SHARED_PYTEST_TEMPROOT' not in os.environ\n"
-        f"assert int(result) == {4 if startup_failure else 0}\n"
-    )
+    expected_exit = 4 if startup_failure else 0
     result = subprocess.run(
-        [sys.executable, "-c", code],
+        [sys.executable, str(driver), str(expected_exit)],
         cwd=tmp_path,
         env=environment,
         capture_output=True,
