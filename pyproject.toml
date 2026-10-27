@@ -14,9 +14,9 @@ dependencies = [
     # the pin is a deliberate repo-shared commit, never a drive-by
     # ``uv lock --upgrade`` in a consumer.
     "mdformat==1.0.0",
-    "mdformat-frontmatter==2.1.2",
+    "mdformat-frontmatter==2.2.0",
     "mdformat-gfm==1.0.0",
-    "ruff==0.17.2",
+    "ruff==0.17.3",
     "mypy==2.4.0",
     # tomlkit for round-trip-preserving pyproject edits in
     # ``_ensure_repo_shared_dep`` -- injects the ``testpaths``
