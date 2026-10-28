@@ -26,35 +26,18 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from conftest import FIXTURES, git_clone
+from conftest import (
+    FIXTURES,
+    advance_origin_to_diverge,
+    git_clone,
+    git_in,
+    run_cli,
+)
 
 from epilatow_repo_shared import cli
 from epilatow_repo_shared.exit_codes import ExitCode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-def _git_in(repo: Path, *args: str) -> None:
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.email=test@example.invalid",
-            "-c",
-            "user.name=Test Author",
-            *args,
-        ],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _run_cli(argv: list[str]) -> ExitCode:
-    parser = cli.args_parser()
-    args = parser.parse_args(argv)
-    return cli.main(args)
 
 
 def _build_fake_clone(
@@ -81,7 +64,7 @@ def _build_fake_clone(
     """
     clone = tmp_path / "clone"
     git_clone(REPO_ROOT, clone)
-    _git_in(clone, "checkout", "-B", "main")
+    git_in(clone, "checkout", "-B", "main")
     tests_dir = clone / "tests"
     for child in tests_dir.iterdir():
         if child.is_dir():
@@ -121,14 +104,14 @@ def _build_fake_clone(
             (existing if existing.endswith("\n") else existing + "\n")
             + ".wt/\n"
         )
-    _git_in(clone, "add", "-A")
-    _git_in(clone, "commit", "-m", "test: stub tests + downgrade pins")
+    git_in(clone, "add", "-A")
+    git_in(clone, "commit", "-m", "test: stub tests + downgrade pins")
 
     origin = tmp_path / "origin.git"
     git_clone(clone, origin, bare=True)
-    _git_in(clone, "remote", "set-url", "origin", str(origin))
-    _git_in(clone, "push", "--quiet", "-u", "origin", "main")
-    _git_in(clone, "remote", "set-head", "origin", "main")
+    git_in(clone, "remote", "set-url", "origin", str(origin))
+    git_in(clone, "push", "--quiet", "-u", "origin", "main")
+    git_in(clone, "remote", "set-head", "origin", "main")
     return clone
 
 
@@ -157,7 +140,7 @@ def test_upgrade_tools_refuses_from_consumer(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: None)
-    exit_code = _run_cli(["upgrade-tools"])
+    exit_code = run_cli(["upgrade-tools"])
     assert exit_code == ExitCode.USAGE
     assert "maintainer-only" in capsys.readouterr().err
 
@@ -180,7 +163,7 @@ def test_upgrade_tools_refuses_dirty_clone_when_a_bump_is_available(
     (clone / "DIRTY_MARKER").write_text("local edit\n")
     capsys.readouterr()
 
-    exit_code = _run_cli(["upgrade-tools", "--only", "ruff"])
+    exit_code = run_cli(["upgrade-tools", "--only", "ruff"])
     assert exit_code == ExitCode.DIRTY
     assert "uncommitted changes" in capsys.readouterr().err
     # The refusal happens before any worktree is spun up.
@@ -200,7 +183,7 @@ def test_upgrade_tools_no_op_ignores_dirty_clone(
     _stub_pypi(monkeypatch, pinned)
     (fake_clone / "DIRTY_MARKER").write_text("local edit\n")
 
-    exit_code = _run_cli(["upgrade-tools"])
+    exit_code = run_cli(["upgrade-tools"])
     assert exit_code == ExitCode.SUCCESS
     assert "every pinned tool is up to date." in capsys.readouterr().out
 
@@ -215,7 +198,7 @@ def test_upgrade_tools_no_op_when_pypi_matches_current_pins(
     )
     _stub_pypi(monkeypatch, pinned)
 
-    exit_code = _run_cli(["upgrade-tools"])
+    exit_code = run_cli(["upgrade-tools"])
     assert exit_code == ExitCode.SUCCESS
     out = capsys.readouterr().out
     assert "every pinned tool is up to date." in out
@@ -228,7 +211,7 @@ def test_upgrade_tools_no_op_when_pypi_matches_current_pins(
 def test_upgrade_tools_only_filter_excluding_everything_is_config_error(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = _run_cli(["upgrade-tools", "--only", "nonexistent-pkg"])
+    exit_code = run_cli(["upgrade-tools", "--only", "nonexistent-pkg"])
     assert exit_code == ExitCode.CONFIG
     assert "excluded every pinned tool" in capsys.readouterr().err
 
@@ -249,7 +232,7 @@ def test_upgrade_tools_bumps_one_pin_in_worktree(
     _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
     capsys.readouterr()
 
-    exit_code = _run_cli(["upgrade-tools", "--only", "ruff"])
+    exit_code = run_cli(["upgrade-tools", "--only", "ruff"])
     assert exit_code == ExitCode.SUCCESS
 
     bumps = [("ruff", "0.5.0", current_ruff)]
@@ -291,7 +274,7 @@ def test_upgrade_tools_push_ff_merges_into_default_branch(
     ).strip()
     capsys.readouterr()
 
-    exit_code = _run_cli(["upgrade-tools", "--push"])
+    exit_code = run_cli(["upgrade-tools", "--push"])
     assert exit_code == ExitCode.SUCCESS
 
     post_push_origin_head = subprocess.check_output(
@@ -308,20 +291,6 @@ def test_upgrade_tools_push_ff_merges_into_default_branch(
     assert not wt_path.exists()
 
 
-def _advance_origin_to_diverge(origin: Path, tmp_path: Path) -> None:
-    """Plant a commit directly on ``origin``'s main so it diverges.
-
-    Same shape as the helper in ``test_cli_integration.py``; lifted
-    here to keep the upgrade-tools file self-contained.
-    """
-    workspace = tmp_path / f"{origin.stem}-divergent-workspace"
-    git_clone(origin, workspace)
-    (workspace / "ORIGIN_DIVERGENCE_MARKER").write_text("plant\n")
-    _git_in(workspace, "add", "ORIGIN_DIVERGENCE_MARKER")
-    _git_in(workspace, "commit", "-m", "test: divergent commit on origin")
-    _git_in(workspace, "push", "--quiet", "origin", "main")
-
-
 def test_upgrade_tools_with_push_rejects_when_origin_non_fast_forward(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -334,10 +303,10 @@ def test_upgrade_tools_with_push_rejects_when_origin_non_fast_forward(
     clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
     monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
     _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
-    _advance_origin_to_diverge(tmp_path / "origin.git", tmp_path)
+    advance_origin_to_diverge(tmp_path / "origin.git", tmp_path)
     capsys.readouterr()
 
-    exit_code = _run_cli(["upgrade-tools", "--only", "ruff", "--push"])
+    exit_code = run_cli(["upgrade-tools", "--only", "ruff", "--push"])
     assert exit_code == ExitCode.ERROR
     err = capsys.readouterr().err
     assert "git push --dry-run" in err
@@ -374,7 +343,7 @@ def test_upgrade_tools_exits_clean_when_every_bump_conflicts(
     monkeypatch.setattr(cli, "_resolve_compatible_bumps", fake_resolve)
     capsys.readouterr()
 
-    exit_code = _run_cli(["upgrade-tools", "--only", "ruff"])
+    exit_code = run_cli(["upgrade-tools", "--only", "ruff"])
     assert exit_code == ExitCode.SUCCESS
 
     out = capsys.readouterr().out
@@ -416,7 +385,7 @@ def test_upgrade_tools_dogfood_failure_leaves_resumable_worktree(
     _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
     capsys.readouterr()
 
-    exit_code = _run_cli(["upgrade-tools", "--only", "ruff"])
+    exit_code = run_cli(["upgrade-tools", "--only", "ruff"])
     assert exit_code == ExitCode.ERROR
     err = capsys.readouterr().err
     assert "dogfood suite failed" in err
@@ -442,7 +411,7 @@ def test_upgrade_tools_dogfood_failure_leaves_resumable_worktree(
     assert subject == f"- deps: bump ruff from 0.5.0 to {current_ruff}."
 
     capsys.readouterr()
-    retry = _run_cli(["upgrade-tools", "--only", "ruff"])
+    retry = run_cli(["upgrade-tools", "--only", "ruff"])
     assert retry == ExitCode.ERROR
     captured = capsys.readouterr()
     assert "resuming existing bump worktree" in captured.out
@@ -470,7 +439,7 @@ def test_upgrade_tools_resumes_existing_worktree_on_re_run(
     monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
     _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
 
-    first = _run_cli(["upgrade-tools", "--only", "ruff"])
+    first = run_cli(["upgrade-tools", "--only", "ruff"])
     assert first == ExitCode.SUCCESS
 
     bumps = [("ruff", "0.5.0", current_ruff)]
@@ -481,7 +450,7 @@ def test_upgrade_tools_resumes_existing_worktree_on_re_run(
     ).strip()
     capsys.readouterr()
 
-    second = _run_cli(["upgrade-tools", "--only", "ruff"])
+    second = run_cli(["upgrade-tools", "--only", "ruff"])
     assert second == ExitCode.SUCCESS
     out = capsys.readouterr().out
     assert "resuming existing bump worktree" in out
@@ -504,7 +473,7 @@ def test_upgrade_tools_resume_rejects_stale_lock_without_dirtying_worktree(
     monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
     _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
 
-    first = _run_cli(["upgrade-tools", "--only", "ruff"])
+    first = run_cli(["upgrade-tools", "--only", "ruff"])
     assert first == ExitCode.SUCCESS
 
     bumps = [("ruff", "0.5.0", current_ruff)]
@@ -518,11 +487,11 @@ def test_upgrade_tools_resume_rejects_stale_lock_without_dirtying_worktree(
             1,
         )
     )
-    _git_in(wt_path, "add", "pyproject.toml")
-    _git_in(wt_path, "commit", "-m", "test: make lock stale")
+    git_in(wt_path, "add", "pyproject.toml")
+    git_in(wt_path, "commit", "-m", "test: make lock stale")
     capsys.readouterr()
 
-    retry = _run_cli(["upgrade-tools", "--only", "ruff"])
+    retry = run_cli(["upgrade-tools", "--only", "ruff"])
     assert retry == ExitCode.ERROR
     captured = capsys.readouterr()
     assert "resuming existing bump worktree" in captured.out
@@ -549,7 +518,7 @@ def test_upgrade_tools_dirty_worktree_blocks_re_run_without_force_retry(
     clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
     monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
     _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
-    first = _run_cli(["upgrade-tools", "--only", "ruff"])
+    first = run_cli(["upgrade-tools", "--only", "ruff"])
     assert first == ExitCode.SUCCESS
 
     bumps = [("ruff", "0.5.0", current_ruff)]
@@ -558,7 +527,7 @@ def test_upgrade_tools_dirty_worktree_blocks_re_run_without_force_retry(
     (wt_path / "DEBUG_SCRATCH").write_text("mid-investigation edit\n")
     capsys.readouterr()
 
-    second = _run_cli(["upgrade-tools", "--only", "ruff"])
+    second = run_cli(["upgrade-tools", "--only", "ruff"])
     assert second == ExitCode.DIRTY
     err = capsys.readouterr().err
     assert "uncommitted changes" in err
@@ -579,7 +548,7 @@ def test_upgrade_tools_force_retry_recreates_dirty_worktree(
     clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
     monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
     _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
-    first = _run_cli(["upgrade-tools", "--only", "ruff"])
+    first = run_cli(["upgrade-tools", "--only", "ruff"])
     assert first == ExitCode.SUCCESS
 
     bumps = [("ruff", "0.5.0", current_ruff)]
@@ -588,7 +557,7 @@ def test_upgrade_tools_force_retry_recreates_dirty_worktree(
     (wt_path / "DEBUG_SCRATCH").write_text("mid-investigation edit\n")
     capsys.readouterr()
 
-    second = _run_cli(["upgrade-tools", "--only", "ruff", "--force-retry"])
+    second = run_cli(["upgrade-tools", "--only", "ruff", "--force-retry"])
     assert second == ExitCode.SUCCESS
     assert wt_path.is_dir()
     assert not (wt_path / "DEBUG_SCRATCH").exists()

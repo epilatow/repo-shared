@@ -35,7 +35,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import FIXTURES
+from conftest import FIXTURES, run_cli
 
 # Reuse the fake-source builder from the upgrade integration tests so a
 # regression in one path doesn't go undetected here. The helper is
@@ -78,7 +78,7 @@ def _consumer(
         check=True,
         capture_output=True,
     )
-    args = cli.args_parser().parse_args(
+    exit_code = run_cli(
         [
             "init",
             "--source",
@@ -87,7 +87,6 @@ def _consumer(
             str(consumer),
         ]
     )
-    exit_code = cli.main(args)
     assert exit_code in (ExitCode.SUCCESS, ExitCode.WARNING), (
         f"init failed against a fresh consumer: {exit_code}"
     )
@@ -254,10 +253,8 @@ def test_run_tests_isolates_startup_and_preserves_gate_overrides(
         '[lint]\nselect = ["E", "F"]\nignore = ["F401"]\n'
     )
     (_consumer / "unused.py").write_text("import sys\n")
-    args = cli.args_parser().parse_args(
-        ["run-tests", "--repo", str(_consumer), "-v"]
-    )
-    assert cli.main(args) == ExitCode.SUCCESS
+    argv = ["run-tests", "--repo", str(_consumer), "-v"]
+    assert run_cli(argv) == ExitCode.SUCCESS
     output = capfd.readouterr().out
     assert "test_ruff_lint[gate-probe] PASSED" in output
     assert not (_consumer / "node_modules").exists()
@@ -274,4 +271,4 @@ def test_run_tests_isolates_startup_and_preserves_gate_overrides(
     # A broken gate must fail even when dotenv requests collection only.
     # The broken ``gate-probe`` is lint data too, never run.
     (_consumer / "gate-probe").write_text("value =\n")
-    assert cli.main(args) == ExitCode.WARNING
+    assert run_cli(argv) == ExitCode.WARNING

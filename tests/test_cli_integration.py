@@ -20,7 +20,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import FIXTURES, git_clone
+from conftest import (
+    FIXTURES,
+    advance_origin_to_diverge,
+    git_clone,
+    git_in,
+    run_cli,
+)
 
 from epilatow_repo_shared import cli
 from epilatow_repo_shared.exit_codes import ExitCode
@@ -38,12 +44,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_SOURCE_URL = f"git+file://{REPO_ROOT}"
 
 
-def _run_cli(argv: list[str]) -> ExitCode:
-    parser = cli.args_parser()
-    args = parser.parse_args(argv)
-    return cli.main(args)
-
-
 def _git_init(path: Path) -> None:
     subprocess.run(
         ["git", "init", "--quiet", "-b", "main", str(path)],
@@ -53,7 +53,7 @@ def _git_init(path: Path) -> None:
 
 def _init_consumer(tmp_path: Path) -> Path:
     _git_init(tmp_path)
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "init",
             "--source",
@@ -113,12 +113,12 @@ def test_init_creates_pyproject_and_vendor_layout(
 
     ignored_link = ".claude/commands/repo-shared-independent-code-review.md"
     assert (
-        _git_in(
+        git_in(
             consumer, "check-ignore", "--no-index", ignored_link
         ).stdout.strip()
         == ignored_link
     )
-    assert _git_in(
+    assert git_in(
         consumer, "ls-files", "--stage", "--", ignored_link
     ).stdout.startswith("120000 ")
 
@@ -158,7 +158,7 @@ def test_init_refuses_when_not_a_git_repo(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
     )
     assert exit_code == ExitCode.ERROR
@@ -180,7 +180,7 @@ def test_init_refuses_on_already_onboarded_repo(
     consumer = _init_consumer(tmp_path)
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(consumer)]
     )
     assert exit_code == ExitCode.USAGE
@@ -194,7 +194,7 @@ def test_status_after_init_reports_pinned_sha_in_sync(
     consumer = _init_consumer(tmp_path)
     capsys.readouterr()
 
-    exit_code = _run_cli(["status", "--repo", str(consumer)])
+    exit_code = run_cli(["status", "--repo", str(consumer)])
     assert exit_code == ExitCode.SUCCESS
     out = capsys.readouterr().out
     assert "pinned:" in out
@@ -223,14 +223,14 @@ def test_status_ignores_runtime_caches_but_flags_other_extras(
         artifact.write_text("generated\n")
     capsys.readouterr()
 
-    exit_code = _run_cli(["status", "--repo", str(consumer)])
+    exit_code = run_cli(["status", "--repo", str(consumer)])
     assert exit_code == ExitCode.SUCCESS
     assert "vendor in sync" in capsys.readouterr().out
 
     extra = tests_dir / "customer_cache" / "unexpected.txt"
     extra.parent.mkdir()
     extra.write_text("not generated\n")
-    exit_code = _run_cli(["status", "--repo", str(consumer)])
+    exit_code = run_cli(["status", "--repo", str(consumer)])
     assert exit_code == ExitCode.ERROR
     assert f"extra: {extra.relative_to(consumer)}" in capsys.readouterr().err
 
@@ -241,7 +241,7 @@ def test_status_without_lockfile_reports_no_pin(
 ) -> None:
     _git_init(tmp_path)
 
-    exit_code = _run_cli(["status", "--repo", str(tmp_path)])
+    exit_code = run_cli(["status", "--repo", str(tmp_path)])
     assert exit_code == ExitCode.SUCCESS
     assert "no epilatow-repo-shared pin" in capsys.readouterr().out
 
@@ -250,7 +250,7 @@ def test_status_refuses_outside_git_repo(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = _run_cli(["status", "--repo", str(tmp_path)])
+    exit_code = run_cli(["status", "--repo", str(tmp_path)])
     assert exit_code == ExitCode.ERROR
     assert "not a git repo" in capsys.readouterr().err
 
@@ -278,7 +278,7 @@ def test_status_ignores_user_placed_extra_symlink_into_vendor(
     )
     capsys.readouterr()
 
-    exit_code = _run_cli(["status", "--repo", str(consumer)])
+    exit_code = run_cli(["status", "--repo", str(consumer)])
     assert exit_code == ExitCode.SUCCESS
     out = capsys.readouterr().out
     assert "vendor in sync" in out
@@ -304,7 +304,7 @@ def test_status_flags_truly_broken_vendor_symlink(
     )
     capsys.readouterr()
 
-    exit_code = _run_cli(["status", "--repo", str(consumer)])
+    exit_code = run_cli(["status", "--repo", str(consumer)])
     assert exit_code == ExitCode.ERROR
     err = capsys.readouterr().err
     assert "broken symlink: subdir/ghost.md" in err
@@ -325,7 +325,7 @@ def test_init_preexisting_file_errors_on_shadowed_symlink(
     consumer_dev = tmp_path / "DEVELOPMENT_SHARED.md"
     consumer_dev.write_text("consumer's own DEVELOPMENT_SHARED.md\n")
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
     )
     assert exit_code == ExitCode.ERROR
@@ -360,7 +360,7 @@ def test_init_re_run_recovers_after_clearing_sync_violation(
     shadow = tmp_path / "DEVELOPMENT_SHARED.md"
     shadow.write_text("consumer's own DEVELOPMENT_SHARED.md\n")
     assert (
-        _run_cli(
+        run_cli(
             ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
         )
         == ExitCode.ERROR
@@ -370,7 +370,7 @@ def test_init_re_run_recovers_after_clearing_sync_violation(
 
     shadow.unlink()
     assert (
-        _run_cli(
+        run_cli(
             ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
         )
         == ExitCode.SUCCESS
@@ -392,7 +392,7 @@ def test_init_preexisting_template_errors_on_drift(
     consumer_claude = tmp_path / "CLAUDE.md"
     consumer_claude.write_text("consumer's own CLAUDE.md\n")
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
     )
     assert exit_code == ExitCode.ERROR
@@ -420,7 +420,7 @@ def test_init_preexisting_template_matching_upstream_no_warning(
     upstream = (REPO_ROOT / "shared" / "templates" / "CLAUDE.md").read_text()
     (tmp_path / "CLAUDE.md").write_text(upstream)
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
     )
     assert exit_code == ExitCode.SUCCESS
@@ -445,7 +445,7 @@ def test_init_ignored_path_succeeds(
     _git_init(tmp_path)
     (tmp_path / ".repo-shared-ignore").write_text("CLAUDE.md\n")
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
     )
     assert exit_code == ExitCode.SUCCESS
@@ -467,7 +467,7 @@ def test_init_from_clone_onboards_plain_target_by_path(
     the CLI source location, decides whether ``init`` proceeds.
     """
     _git_init(tmp_path)
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
     )
     assert exit_code == ExitCode.SUCCESS
@@ -483,7 +483,7 @@ def test_init_refuses_when_target_is_repo_shared_source(
     source tree is reached by explicit path or as the default cwd of
     an ``init`` run with no path argument from inside the clone.
     """
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(REPO_ROOT)]
     )
     assert exit_code == ExitCode.USAGE
@@ -506,7 +506,7 @@ def test_init_adds_dep_to_pre_existing_pyproject_without_clobbering(
     )
     (tmp_path / "pyproject.toml").write_text(existing)
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
     )
     assert exit_code == ExitCode.SUCCESS
@@ -545,7 +545,7 @@ def test_init_preserves_incompatible_python_requirement(
         "dependencies = []\n"
     )
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", LOCAL_SOURCE_URL, "--repo", str(tmp_path)]
     )
 
@@ -565,7 +565,7 @@ def test_init_reports_error_when_source_url_is_invalid(
     _git_init(tmp_path)
     bogus_source = f"git+file://{tmp_path / 'definitely-not-a-repo'}"
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", bogus_source, "--repo", str(tmp_path)]
     )
     assert exit_code == ExitCode.ERROR
@@ -586,23 +586,6 @@ def test_init_reports_error_when_source_url_is_invalid(
 # given an ``origin`` remote that's a bare clone of itself, so the
 # ``git fetch origin`` + ``origin/HEAD`` discovery in ``_cmd_upgrade``
 # behaves the way it would in a real consumer.
-
-
-def _git_in(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.email=test@example.invalid",
-            "-c",
-            "user.name=Test Author",
-            *args,
-        ],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
 
 
 def _head_sha(repo: Path) -> str:
@@ -644,8 +627,8 @@ def _clone_fake_source(into: Path) -> Path:
         check=True,
         capture_output=True,
     )
-    _git_in(into, "add", "-A")
-    _git_in(into, "commit", "-m", "fake-source baseline")
+    git_in(into, "add", "-A")
+    git_in(into, "commit", "-m", "fake-source baseline")
     return into
 
 
@@ -653,8 +636,8 @@ def _add_bump_commit(fake_source: Path) -> str:
     """Add a no-op commit on top of fake_source and return the new SHA."""
     marker = fake_source / "UPGRADE_TEST_MARKER"
     marker.write_text("bump marker for upgrade integration tests\n")
-    _git_in(fake_source, "add", "UPGRADE_TEST_MARKER")
-    _git_in(fake_source, "commit", "-m", "test: bump marker")
+    git_in(fake_source, "add", "UPGRADE_TEST_MARKER")
+    git_in(fake_source, "commit", "-m", "test: bump marker")
     return _head_sha(fake_source)
 
 
@@ -672,21 +655,21 @@ def _setup_consumer_with_origin(
     ``(origin_bare_path, default_branch)``.
     """
     _git_init(consumer)
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", source_url, "--repo", str(consumer)]
     )
     assert exit_code == ExitCode.SUCCESS
     if pyproject_extras is not None:
         pyproject = consumer / "pyproject.toml"
         pyproject.write_text(pyproject.read_text() + pyproject_extras)
-    _git_in(consumer, "add", "-A")
-    _git_in(consumer, "commit", "-m", "initial onboard")
+    git_in(consumer, "add", "-A")
+    git_in(consumer, "commit", "-m", "initial onboard")
 
     origin = consumer.parent / f"{consumer.name}-origin.git"
     git_clone(consumer, origin, bare=True)
-    _git_in(consumer, "remote", "add", "origin", str(origin))
-    _git_in(consumer, "push", "--quiet", "-u", "origin", "main")
-    _git_in(consumer, "remote", "set-head", "origin", "main")
+    git_in(consumer, "remote", "add", "origin", str(origin))
+    git_in(consumer, "push", "--quiet", "-u", "origin", "main")
+    git_in(consumer, "remote", "set-head", "origin", "main")
     return origin, "main"
 
 
@@ -700,12 +683,12 @@ def _setup_consumer_no_origin(consumer: Path, source_url: str) -> str:
     Returns the default branch name.
     """
     _git_init(consumer)
-    exit_code = _run_cli(
+    exit_code = run_cli(
         ["init", "--source", source_url, "--repo", str(consumer)]
     )
     assert exit_code == ExitCode.SUCCESS
-    _git_in(consumer, "add", "-A")
-    _git_in(consumer, "commit", "-m", "initial onboard")
+    git_in(consumer, "add", "-A")
+    git_in(consumer, "commit", "-m", "initial onboard")
     assert (
         subprocess.check_output(
             ["git", "remote"], cwd=consumer, text=True
@@ -715,22 +698,6 @@ def _setup_consumer_no_origin(consumer: Path, source_url: str) -> str:
     return "main"
 
 
-def _advance_origin_to_diverge(origin: Path, tmp_path: Path) -> None:
-    """Plant a commit directly on ``origin``'s main so it diverges.
-
-    Used to simulate "non-fast-forward push rejected" scenarios:
-    after this, any consumer / maintainer-clone tied to ``origin``
-    will have its local ``main`` strictly behind ``origin/main``, and
-    ``git push --dry-run origin main:main`` rejects.
-    """
-    workspace = tmp_path / f"{origin.stem}-divergent-workspace"
-    git_clone(origin, workspace)
-    (workspace / "ORIGIN_DIVERGENCE_MARKER").write_text("plant\n")
-    _git_in(workspace, "add", "ORIGIN_DIVERGENCE_MARKER")
-    _git_in(workspace, "commit", "-m", "test: divergent commit on origin")
-    _git_in(workspace, "push", "--quiet", "origin", "main")
-
-
 _PLACEHOLDER_SHA = "0" * 40
 
 
@@ -738,7 +705,7 @@ def test_upgrade_refuses_outside_git_repo(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             _PLACEHOLDER_SHA,
@@ -763,7 +730,7 @@ def test_upgrade_refuses_dirty_working_tree(
     (consumer / "DIRTY_MARKER").write_text("local edit\n")
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             _PLACEHOLDER_SHA,
@@ -788,7 +755,7 @@ def test_upgrade_is_no_op_when_target_matches_current_pin(
     _setup_consumer_with_origin(consumer, f"git+file://{fake_source}")
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             current_sha,
@@ -819,7 +786,7 @@ def test_upgrade_no_op_ignores_dirty_working_tree(
     (consumer / "DIRTY_MARKER").write_text("local edit\n")
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             current_sha,
@@ -845,7 +812,7 @@ def test_upgrade_creates_worktree_and_bumps_lock(
     bump_sha = _add_bump_commit(fake_source)
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -887,11 +854,11 @@ def test_upgrade_base_builds_worktree_on_local_ref(
 
     # A commit on local main that origin/main does not have.
     (consumer / "LOCAL_ONLY_MARKER").write_text("unpushed local work\n")
-    _git_in(consumer, "add", "LOCAL_ONLY_MARKER")
-    _git_in(consumer, "commit", "-m", "local: unpushed work")
+    git_in(consumer, "add", "LOCAL_ONLY_MARKER")
+    git_in(consumer, "commit", "-m", "local: unpushed work")
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -925,7 +892,7 @@ def test_upgrade_with_run_tests_succeeds_against_bumped_pin(
     bump_sha = _add_bump_commit(fake_source)
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -958,7 +925,7 @@ def test_upgrade_with_push_ff_merges_and_cleans_up(
     bump_sha = _add_bump_commit(fake_source)
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -993,15 +960,15 @@ def test_upgrade_commits_link_inside_ignored_directory(
     rel = ".claude/commands/repo-shared-upgrade-probe.md"
     upstream = fake_source / "shared/dotfiles/claude/commands" / Path(rel).name
     upstream.write_text("# Upgrade probe\n")
-    _git_in(fake_source, "add", "shared/dotfiles/claude/commands")
-    _git_in(fake_source, "commit", "-m", "test: add ignored command")
+    git_in(fake_source, "add", "shared/dotfiles/claude/commands")
+    git_in(fake_source, "commit", "-m", "test: add ignored command")
 
     assert (
-        _git_in(consumer, "check-ignore", "--no-index", rel).stdout.strip()
+        git_in(consumer, "check-ignore", "--no-index", rel).stdout.strip()
         == rel
     )
     assert (
-        _run_cli(
+        run_cli(
             [
                 "upgrade",
                 _head_sha(fake_source),
@@ -1014,7 +981,7 @@ def test_upgrade_commits_link_inside_ignored_directory(
         )
         == ExitCode.SUCCESS
     )
-    assert _git_in(
+    assert git_in(
         consumer, "ls-files", "--stage", "--", rel
     ).stdout.startswith("120000 ")
     assert (consumer / rel).is_symlink()
@@ -1036,15 +1003,15 @@ def test_upgrade_commits_removal_inside_ignored_directory(
     )
     upstream = fake_source / upstream_rel
     upstream.write_text("# Upgrade probe\n")
-    _git_in(fake_source, "add", upstream_rel)
-    _git_in(fake_source, "commit", "-m", "test: add ignored command")
+    git_in(fake_source, "add", upstream_rel)
+    git_in(fake_source, "commit", "-m", "test: add ignored command")
     rel = ".claude/commands/repo-shared-upgrade-probe.md"
     assert (
-        _git_in(consumer, "check-ignore", "--no-index", rel).stdout.strip()
+        git_in(consumer, "check-ignore", "--no-index", rel).stdout.strip()
         == rel
     )
     assert (
-        _run_cli(
+        run_cli(
             [
                 "upgrade",
                 _head_sha(fake_source),
@@ -1057,15 +1024,15 @@ def test_upgrade_commits_removal_inside_ignored_directory(
         )
         == ExitCode.SUCCESS
     )
-    assert _git_in(
+    assert git_in(
         consumer, "ls-files", "--stage", "--", rel
     ).stdout.startswith("120000 ")
 
     upstream.unlink()
-    _git_in(fake_source, "add", "-u", "--", upstream_rel)
-    _git_in(fake_source, "commit", "-m", "test: remove ignored command")
+    git_in(fake_source, "add", "-u", "--", upstream_rel)
+    git_in(fake_source, "commit", "-m", "test: remove ignored command")
     assert (
-        _run_cli(
+        run_cli(
             [
                 "upgrade",
                 _head_sha(fake_source),
@@ -1078,7 +1045,7 @@ def test_upgrade_commits_removal_inside_ignored_directory(
         )
         == ExitCode.SUCCESS
     )
-    assert _git_in(consumer, "ls-files", "--", rel).stdout == ""
+    assert git_in(consumer, "ls-files", "--", rel).stdout == ""
     assert not (consumer / rel).is_symlink()
     assert not (
         consumer / "_repo_shared/dotfiles/claude/commands" / Path(rel).name
@@ -1126,14 +1093,14 @@ def test_upgrade_default_shared_tests_ignore_consumer_preflight(
     # A target package may predate the isolated runner entry point.
     runner = "src/epilatow_repo_shared/shared_test_runner.py"
     (fake_source / runner).unlink()
-    _git_in(fake_source, "add", runner)
-    _git_in(fake_source, "commit", "-m", "test: target without shared runner")
+    git_in(fake_source, "add", runner)
+    git_in(fake_source, "commit", "-m", "test: target without shared runner")
     consumer = tmp_path / "consumer"
     consumer.mkdir()
     source = f"git+file://{fake_source}"
     _setup_consumer_with_origin(consumer, source)
     _plant_consumer_startup_traps(consumer)
-    _git_in(
+    git_in(
         consumer,
         "add",
         "consumer_startup_trap.py",
@@ -1143,13 +1110,13 @@ def test_upgrade_default_shared_tests_ignore_consumer_preflight(
         "package.json",
         "package-lock.json",
     )
-    _git_in(consumer, "commit", "-m", "test: consumer startup hooks")
-    _git_in(consumer, "push", "--quiet", "origin", "main")
+    git_in(consumer, "commit", "-m", "test: consumer startup hooks")
+    git_in(consumer, "push", "--quiet", "origin", "main")
     bump_sha = _add_bump_commit(fake_source)
     argv = ["upgrade", bump_sha, "--repo", str(consumer), "--source", source]
     wt = consumer / ".wt" / f"repo-shared-update-{bump_sha[:7]}"
     if resume:
-        assert _run_cli(argv) == ExitCode.SUCCESS
+        assert run_cli(argv) == ExitCode.SUCCESS
     # uv loads these options after the CLI starts its subprocess.
     monkeypatch.setenv("PYTHONPATH", str(wt))
     monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
@@ -1162,7 +1129,7 @@ def test_upgrade_default_shared_tests_ignore_consumer_preflight(
     )
     monkeypatch.setenv("UV_ENV_FILE", str(env_file))
 
-    assert _run_cli([*argv, flag, "--keep-worktree"]) == ExitCode.SUCCESS
+    assert run_cli([*argv, flag, "--keep-worktree"]) == ExitCode.SUCCESS
     assert not (wt / "node_modules").exists()
     assert cli._git_is_clean(wt)
     if flag == "--push":
@@ -1186,7 +1153,7 @@ def test_upgrade_explicit_command_keeps_consumer_startup_environment(
         ),
     )
     _plant_consumer_startup_traps(consumer)
-    _git_in(
+    git_in(
         consumer,
         "add",
         "consumer_startup_trap.py",
@@ -1196,15 +1163,15 @@ def test_upgrade_explicit_command_keeps_consumer_startup_environment(
         "package.json",
         "package-lock.json",
     )
-    _git_in(consumer, "commit", "-m", "test: explicit consumer preflight")
-    _git_in(consumer, "push", "--quiet", "origin", "main")
+    git_in(consumer, "commit", "-m", "test: explicit consumer preflight")
+    git_in(consumer, "push", "--quiet", "origin", "main")
     bump_sha = _add_bump_commit(fake_source)
     wt = consumer / ".wt" / f"repo-shared-update-{bump_sha[:7]}"
     monkeypatch.setenv("PYTHONPATH", str(wt))
     monkeypatch.setenv("PYTEST_PLUGINS", "consumer_startup_trap")
 
     assert (
-        _run_cli(
+        run_cli(
             [
                 "upgrade",
                 bump_sha,
@@ -1233,10 +1200,10 @@ def test_upgrade_with_push_rejects_when_origin_is_non_fast_forward(
         consumer, f"git+file://{fake_source}"
     )
     bump_sha = _add_bump_commit(fake_source)
-    _advance_origin_to_diverge(origin, tmp_path)
+    advance_origin_to_diverge(origin, tmp_path)
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1273,7 +1240,7 @@ def test_upgrade_no_origin_creates_worktree_and_bumps_lock(
     bump_sha = _add_bump_commit(fake_source)
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1308,7 +1275,7 @@ def test_upgrade_no_origin_push_ff_merges_locally(
     bump_sha = _add_bump_commit(fake_source)
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1343,7 +1310,7 @@ def test_upgrade_run_tests_failure_leaves_worktree_with_bump_commit(
     bump_sha = _add_bump_commit(fake_source)
     capsys.readouterr()
 
-    exit_code = _run_cli(
+    exit_code = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1380,7 +1347,7 @@ def test_upgrade_resumes_existing_worktree_on_re_run(
     bump_sha = _add_bump_commit(fake_source)
 
     # First run: stage the bump in the worktree, no tests / no push.
-    first = _run_cli(
+    first = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1400,7 +1367,7 @@ def test_upgrade_resumes_existing_worktree_on_re_run(
     capsys.readouterr()
 
     # Second run: same target -- expect resume path, no new commit.
-    second = _run_cli(
+    second = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1428,7 +1395,7 @@ def test_upgrade_dirty_worktree_blocks_re_run_without_force_retry(
     consumer.mkdir()
     _setup_consumer_with_origin(consumer, f"git+file://{fake_source}")
     bump_sha = _add_bump_commit(fake_source)
-    first = _run_cli(
+    first = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1444,7 +1411,7 @@ def test_upgrade_dirty_worktree_blocks_re_run_without_force_retry(
     (wt_path / "DEBUG_SCRATCH").write_text("mid-investigation edit\n")
     capsys.readouterr()
 
-    second = _run_cli(
+    second = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1472,7 +1439,7 @@ def test_upgrade_force_retry_recreates_dirty_worktree(
     consumer.mkdir()
     _setup_consumer_with_origin(consumer, f"git+file://{fake_source}")
     bump_sha = _add_bump_commit(fake_source)
-    first = _run_cli(
+    first = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1488,7 +1455,7 @@ def test_upgrade_force_retry_recreates_dirty_worktree(
     (wt_path / "DEBUG_SCRATCH").write_text("mid-investigation edit\n")
     capsys.readouterr()
 
-    second = _run_cli(
+    second = run_cli(
         [
             "upgrade",
             bump_sha,
@@ -1522,7 +1489,7 @@ def test_revendor_clean_consumer_returns_success(
     consumer = _init_consumer(tmp_path)
     capsys.readouterr()
 
-    exit_code = _run_cli(["_revendor", str(consumer)])
+    exit_code = run_cli(["_revendor", str(consumer)])
     assert exit_code == ExitCode.SUCCESS
 
 
@@ -1545,7 +1512,7 @@ def test_revendor_errors_when_canonical_path_is_out_of_sync(
     (consumer / "CLAUDE.md").write_text("consumer-customized CLAUDE.md\n")
     capsys.readouterr()
 
-    exit_code = _run_cli(["_revendor", str(consumer)])
+    exit_code = run_cli(["_revendor", str(consumer)])
     assert exit_code == ExitCode.ERROR
     err = capsys.readouterr().err
     assert "DEVELOPMENT_SHARED.md" in err

@@ -8,6 +8,10 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from epilatow_repo_shared.exit_codes import ExitCode
 
 # Programs the tests write out and run: probes, conftest files, and
 # stand-in suites, kept as real files, where the quality gates check
@@ -59,6 +63,51 @@ def git_clone(source: Path, dest: Path, *, bare: bool = False) -> None:
         check=True,
         capture_output=True,
     )
+
+
+def git_in(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run ``git <args>`` in ``repo`` with a pinned test identity."""
+    return subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "user.name=Test Author",
+            *args,
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def run_cli(argv: list[str]) -> ExitCode:
+    """Run the repo-shared CLI in-process on ``argv``."""
+    # Imported here rather than at the top so the CLI's modules load
+    # after this file's bytecode settings below.
+    from epilatow_repo_shared import cli
+
+    parser = cli.args_parser()
+    args = parser.parse_args(argv)
+    return cli.main(args)
+
+
+def advance_origin_to_diverge(origin: Path, tmp_path: Path) -> None:
+    """Plant a commit directly on ``origin``'s main so it diverges.
+
+    Used to simulate "non-fast-forward push rejected" scenarios:
+    after this, any consumer / maintainer-clone tied to ``origin``
+    will have its local ``main`` strictly behind ``origin/main``, and
+    ``git push --dry-run origin main:main`` rejects.
+    """
+    workspace = tmp_path / f"{origin.stem}-divergent-workspace"
+    git_clone(origin, workspace)
+    (workspace / "ORIGIN_DIVERGENCE_MARKER").write_text("plant\n")
+    git_in(workspace, "add", "ORIGIN_DIVERGENCE_MARKER")
+    git_in(workspace, "commit", "-m", "test: divergent commit on origin")
+    git_in(workspace, "push", "--quiet", "origin", "main")
 
 
 _pycache_tmpdir = tempfile.mkdtemp(prefix="pytest_pycache_repo_shared_")

@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import git_in
 
 from epilatow_repo_shared import sp
 from epilatow_repo_shared.cli import (
@@ -399,24 +400,7 @@ def _git_init_with_initial_commit(repo: Path) -> None:
         check=True,
         capture_output=True,
     )
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.email=test@example.invalid",
-            "-c",
-            "user.name=Test",
-            "-C",
-            str(repo),
-            "commit",
-            "--allow-empty",
-            "--quiet",
-            "-m",
-            "init",
-        ],
-        check=True,
-        capture_output=True,
-    )
+    git_in(repo, "commit", "--allow-empty", "--quiet", "-m", "init")
 
 
 def test_project_name_in_main_checkout_is_repo_root_basename(
