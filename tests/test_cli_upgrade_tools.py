@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from conftest import FIXTURES
+from conftest import FIXTURES, git_clone
 
 from epilatow_repo_shared import cli
 from epilatow_repo_shared.exit_codes import ExitCode
@@ -80,11 +80,7 @@ def _build_fake_clone(
       bare-clone origin).
     """
     clone = tmp_path / "clone"
-    subprocess.run(
-        ["git", "clone", "--quiet", str(REPO_ROOT), str(clone)],
-        check=True,
-        capture_output=True,
-    )
+    git_clone(REPO_ROOT, clone)
     _git_in(clone, "checkout", "-B", "main")
     tests_dir = clone / "tests"
     for child in tests_dir.iterdir():
@@ -129,11 +125,7 @@ def _build_fake_clone(
     _git_in(clone, "commit", "-m", "test: stub tests + downgrade pins")
 
     origin = tmp_path / "origin.git"
-    subprocess.run(
-        ["git", "clone", "--quiet", "--bare", str(clone), str(origin)],
-        check=True,
-        capture_output=True,
-    )
+    git_clone(clone, origin, bare=True)
     _git_in(clone, "remote", "set-url", "origin", str(origin))
     _git_in(clone, "push", "--quiet", "-u", "origin", "main")
     _git_in(clone, "remote", "set-head", "origin", "main")
@@ -323,11 +315,7 @@ def _advance_origin_to_diverge(origin: Path, tmp_path: Path) -> None:
     here to keep the upgrade-tools file self-contained.
     """
     workspace = tmp_path / f"{origin.stem}-divergent-workspace"
-    subprocess.run(
-        ["git", "clone", "--quiet", str(origin), str(workspace)],
-        check=True,
-        capture_output=True,
-    )
+    git_clone(origin, workspace)
     (workspace / "ORIGIN_DIVERGENCE_MARKER").write_text("plant\n")
     _git_in(workspace, "add", "ORIGIN_DIVERGENCE_MARKER")
     _git_in(workspace, "commit", "-m", "test: divergent commit on origin")

@@ -20,7 +20,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import FIXTURES
+from conftest import FIXTURES, git_clone
 
 from epilatow_repo_shared import cli
 from epilatow_repo_shared.exit_codes import ExitCode
@@ -683,11 +683,7 @@ def _setup_consumer_with_origin(
     _git_in(consumer, "commit", "-m", "initial onboard")
 
     origin = consumer.parent / f"{consumer.name}-origin.git"
-    subprocess.run(
-        ["git", "clone", "--quiet", "--bare", str(consumer), str(origin)],
-        check=True,
-        capture_output=True,
-    )
+    git_clone(consumer, origin, bare=True)
     _git_in(consumer, "remote", "add", "origin", str(origin))
     _git_in(consumer, "push", "--quiet", "-u", "origin", "main")
     _git_in(consumer, "remote", "set-head", "origin", "main")
@@ -728,11 +724,7 @@ def _advance_origin_to_diverge(origin: Path, tmp_path: Path) -> None:
     ``git push --dry-run origin main:main`` rejects.
     """
     workspace = tmp_path / f"{origin.stem}-divergent-workspace"
-    subprocess.run(
-        ["git", "clone", "--quiet", str(origin), str(workspace)],
-        check=True,
-        capture_output=True,
-    )
+    git_clone(origin, workspace)
     (workspace / "ORIGIN_DIVERGENCE_MARKER").write_text("plant\n")
     _git_in(workspace, "add", "ORIGIN_DIVERGENCE_MARKER")
     _git_in(workspace, "commit", "-m", "test: divergent commit on origin")
