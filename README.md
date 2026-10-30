@@ -46,7 +46,10 @@ list it in `.repo-shared-ignore` -- see
 - `.markdownlint.json` and `.markdownlint-cli2.jsonc` -- markdownlint rule
   config and custom-rule registration for the linter test below.
 - `.gitignore` -- baseline Python / editor / OS ignores plus the `.wt/`
-  worktree dir `upgrade` uses.
+  worktree dir `upgrade` uses. Its `.venv`, `.pytest_cache`, `.ruff_cache`,
+  `.mypy_cache`, `htmlcov`, `.wt`, and root `tmp` entries also match symlinks,
+  so a checkout on slow storage can link them to existing directories
+  elsewhere.
 
 ### Agent Skills
 
@@ -198,7 +201,9 @@ usual. Those sessions and repo-shared's tools also run with
 `NODE_DISABLE_COMPILE_CACHE=1`, overriding your environment, so disposable
 worktrees don't accumulate Node compilation caches.
 
-`upgrade` refuses to run on a dirty working tree. It commits the bump on branch
+`upgrade` refuses to run on a dirty working tree, which includes a symlink your
+current `.gitignore` doesn't ignore; list such a link in `.git/info/exclude`
+first, with no trailing slash (`/.wt`). It commits the bump on branch
 `repo-shared/update-<short>` (`<short>` is the target's short SHA) in a
 worktree at `<consumer>/.wt/repo-shared-update-<short>`, so rerunning against
 the same target resumes a failed attempt. Without `--push`, merge that branch

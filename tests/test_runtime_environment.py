@@ -12,7 +12,10 @@ import pytest
 from conftest import FIXTURES
 
 from epilatow_repo_shared import shared_test_runner
-from epilatow_repo_shared.runtime_environment import node_cache_disabled
+from epilatow_repo_shared.runtime_environment import (
+    node_cache_disabled,
+    prepare_scratch_parent,
+)
 
 
 @pytest.mark.parametrize("previous", [None, "", "0", "1"])
@@ -27,6 +30,22 @@ def test_node_policy_restores_environment_after_failure(
         assert os.environ["NODE_DISABLE_COMPILE_CACHE"] == "1"
         raise RuntimeError("test failure")
     assert os.environ.get("NODE_DISABLE_COMPILE_CACHE") == previous
+
+
+def test_scratch_parent_works_through_a_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    link = tmp_path / "tmp"
+    link.symlink_to(target, target_is_directory=True)
+    prepare_scratch_parent(link / "pytest")
+    assert (target / "pytest" / "pyproject.toml").is_file()
+
+
+def test_scratch_parent_explains_a_dangling_symlink(tmp_path: Path) -> None:
+    link = tmp_path / "tmp"
+    link.symlink_to(tmp_path / "gone", target_is_directory=True)
+    with pytest.raises(ValueError, match="PYTEST_DEBUG_TEMPROOT"):
+        prepare_scratch_parent(link / "pytest")
 
 
 @pytest.mark.parametrize("isolated", [False, True])

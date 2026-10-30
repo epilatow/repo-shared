@@ -99,10 +99,10 @@ def _build_fake_clone(
     # the fixture's commit carries it forward.
     gitignore = clone / ".gitignore"
     existing = gitignore.read_text() if gitignore.is_file() else ""
-    if ".wt/" not in {line.strip() for line in existing.splitlines()}:
+    if ".wt" not in {line.strip() for line in existing.splitlines()}:
         gitignore.write_text(
             (existing if existing.endswith("\n") else existing + "\n")
-            + ".wt/\n"
+            + ".wt\n"
         )
     git_in(clone, "add", "-A")
     git_in(clone, "commit", "-m", "test: stub tests + downgrade pins")
@@ -214,6 +214,45 @@ def test_upgrade_tools_only_filter_excluding_everything_is_config_error(
     exit_code = run_cli(["upgrade-tools", "--only", "nonexistent-pkg"])
     assert exit_code == ExitCode.CONFIG
     assert "excluded every pinned tool" in capsys.readouterr().err
+
+
+def test_upgrade_tools_bumps_through_symlinked_wt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pinned = dict(
+        cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
+    )
+    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
+    _stub_pypi(monkeypatch, pinned)
+    target = tmp_path / "local-storage"
+    target.mkdir()
+    (clone / ".wt").symlink_to(target, target_is_directory=True)
+
+    exit_code = run_cli(["upgrade-tools", "--only", "ruff"])
+    assert exit_code == ExitCode.SUCCESS
+    bump_hash = cli._tool_bump_hash([("ruff", "0.5.0", pinned["ruff"])])
+    assert (target / f"repo-shared-tool-bump-{bump_hash}").is_dir()
+
+
+def test_upgrade_tools_reports_wt_link_with_missing_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pinned = dict(
+        cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
+    )
+    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
+    _stub_pypi(monkeypatch, pinned)
+    (clone / ".wt").symlink_to(tmp_path / "gone", target_is_directory=True)
+    capsys.readouterr()
+
+    exit_code = run_cli(["upgrade-tools", "--only", "ruff"])
+    assert exit_code == ExitCode.ERROR
+    assert "restore its target" in capsys.readouterr().err
 
 
 def test_upgrade_tools_bumps_one_pin_in_worktree(

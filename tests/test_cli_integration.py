@@ -835,6 +835,141 @@ def test_upgrade_creates_worktree_and_bumps_lock(
     assert consumer_locked_sha != bump_sha
 
 
+def _consumer_with_wt_link(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+    """Onboard a consumer whose ``.wt`` is a symlink to other storage.
+
+    Returns ``(consumer, link_target, fake_source, bump_sha)``.
+    """
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_with_origin(consumer, f"git+file://{fake_source}")
+    target = tmp_path / "local-storage"
+    target.mkdir()
+    (consumer / ".wt").symlink_to(target, target_is_directory=True)
+    return consumer, target, fake_source, _add_bump_commit(fake_source)
+
+
+def _upgrade_to(
+    consumer: Path, sha: str, fake_source: Path, *flags: str
+) -> ExitCode:
+    return run_cli(
+        [
+            "upgrade",
+            sha,
+            "--repo",
+            str(consumer),
+            "--source",
+            f"git+file://{fake_source}",
+            *flags,
+        ]
+    )
+
+
+def test_upgrade_builds_worktree_through_symlinked_wt(tmp_path: Path) -> None:
+    consumer, target, fake_source, sha = _consumer_with_wt_link(tmp_path)
+
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
+    wt_path = target / f"repo-shared-update-{sha[:7]}"
+    assert cli._read_locked_sha(wt_path) == sha
+
+
+def test_upgrade_resumes_through_symlinked_wt(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    consumer, _target, fake_source, sha = _consumer_with_wt_link(tmp_path)
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
+    capsys.readouterr()
+
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
+    assert "resuming existing update worktree" in capsys.readouterr().out
+
+
+def test_upgrade_force_retry_through_symlinked_wt(tmp_path: Path) -> None:
+    consumer, target, fake_source, sha = _consumer_with_wt_link(tmp_path)
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
+    wt_path = target / f"repo-shared-update-{sha[:7]}"
+    (wt_path / "DEBUG_SCRATCH").write_text("edit\n")
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.DIRTY
+
+    exit_code = _upgrade_to(consumer, sha, fake_source, "--force-retry")
+    assert exit_code == ExitCode.SUCCESS
+    assert not (wt_path / "DEBUG_SCRATCH").exists()
+    assert cli._read_locked_sha(wt_path) == sha
+
+
+def test_upgrade_push_through_symlinked_wt(tmp_path: Path) -> None:
+    consumer, target, fake_source, sha = _consumer_with_wt_link(tmp_path)
+
+    assert (
+        _upgrade_to(consumer, sha, fake_source, "--push") == ExitCode.SUCCESS
+    )
+    assert cli._read_locked_sha(consumer) == sha
+    assert not (target / f"repo-shared-update-{sha[:7]}").exists()
+    assert (consumer / ".wt").is_symlink()
+    assert git_in(consumer, "status", "--porcelain").stdout == ""
+
+
+def test_upgrade_keeps_update_branch_when_wt_link_target_is_gone(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    consumer, target, fake_source, sha = _consumer_with_wt_link(tmp_path)
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
+    shutil.rmtree(target)
+    git_in(consumer, "worktree", "prune")
+    capsys.readouterr()
+
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.ERROR
+    assert "restore its target" in capsys.readouterr().err
+    assert cli._git_branch_exists(consumer, f"repo-shared/update-{sha[:7]}")
+
+
+def test_upgrade_error_leads_out_of_a_deleted_worktree(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An emptied ``.wt`` target leaves a stale worktree registration."""
+    consumer, target, fake_source, sha = _consumer_with_wt_link(tmp_path)
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
+    shutil.rmtree(target)
+    target.mkdir()
+    capsys.readouterr()
+
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.ERROR
+    assert "git worktree prune" in capsys.readouterr().err
+
+    git_in(consumer, "worktree", "prune")
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
+    wt_path = target / f"repo-shared-update-{sha[:7]}"
+    assert cli._read_locked_sha(wt_path) == sha
+
+
+def test_upgrade_delivers_gitignore_past_locally_excluded_wt_link(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A link the current ``.gitignore`` misses needs a local exclude."""
+    consumer, target, fake_source, sha = _consumer_with_wt_link(tmp_path)
+    vendored = consumer / "_repo_shared" / "dottemplates" / "gitignore"
+    for path in (consumer / ".gitignore", vendored):
+        path.write_text(path.read_text().replace("\n.wt\n", "\n.wt/\n"))
+    git_in(consumer, "add", ".gitignore", str(vendored))
+    git_in(consumer, "commit", "-m", "slash-terminated .wt entry")
+    git_in(consumer, "push", "--quiet", "origin", "main")
+    capsys.readouterr()
+
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.DIRTY
+    assert ".git/info/exclude" in capsys.readouterr().err
+
+    with (consumer / ".git" / "info" / "exclude").open("a") as exclude:
+        exclude.write("/.wt\n")
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
+    gitignore = target / f"repo-shared-update-{sha[:7]}" / ".gitignore"
+    assert "\n.wt\n" in gitignore.read_text()
+
+
 def test_upgrade_base_builds_worktree_on_local_ref(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

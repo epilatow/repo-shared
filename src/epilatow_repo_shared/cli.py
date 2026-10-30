@@ -633,6 +633,9 @@ def _ensure_tool_bump_worktree(
     Mirrors ``_ensure_update_worktree``'s shape for the consumer
     upgrade flow.
     """
+    # First, so a ``.wt`` link with a missing target can't cost a branch.
+    if not _prepare_worktree_parent(wt_path):
+        return ExitCode.ERROR
     branch_exists = _git_branch_exists(repo_root, branch)
     worktree_exists = wt_path.is_dir() and (wt_path / ".git").exists()
 
@@ -660,7 +663,6 @@ def _ensure_tool_bump_worktree(
     elif worktree_exists and not branch_exists:
         _remove_worktree(repo_root, wt_path)
 
-    wt_path.parent.mkdir(parents=True, exist_ok=True)
     create = sp.run(
         [
             "git",
@@ -676,7 +678,7 @@ def _ensure_tool_bump_worktree(
         timeout=sp.SHORT_TIMEOUT_SECONDS,
     )
     if create.returncode != 0:
-        _eprint(f"git worktree add failed for {wt_path}; resolve and rerun.")
+        _report_worktree_add_failure(wt_path)
         return ExitCode.SUBPROCESS
     return "needs-work"
 
@@ -1150,7 +1152,8 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
     if not _git_is_clean(consumer_root):
         _eprint(
             "working tree has uncommitted changes; refusing to "
-            "upgrade. Commit or stash, then re-run."
+            "upgrade. Commit or stash, then re-run. A symlink to other "
+            "storage belongs in .git/info/exclude instead."
         )
         return ExitCode.DIRTY
 
@@ -1366,6 +1369,28 @@ def _git_branch_ff_mergeable(
     return base.stdout.strip() == tip.stdout.strip()
 
 
+def _prepare_worktree_parent(wt_path: Path) -> bool:
+    """Create ``wt_path``'s parent, reporting one that can't exist."""
+    try:
+        wt_path.parent.mkdir(parents=True, exist_ok=True)
+    except FileExistsError:
+        _eprint(
+            f"{wt_path.parent} is not a directory. If it is a symlink, "
+            "restore its target and rerun."
+        )
+        return False
+    return True
+
+
+def _report_worktree_add_failure(wt_path: Path) -> None:
+    # Advice rather than an automatic prune: the prune is repo-wide, and
+    # a worktree on another machine's local storage looks deleted here.
+    _eprint(
+        f"git worktree add failed for {wt_path}; resolve and rerun. If a "
+        "worktree there was deleted, run `git worktree prune` first."
+    )
+
+
 def _remove_worktree(consumer_root: Path, wt_path: Path) -> None:
     if wt_path.exists():
         sp.run(
@@ -1400,6 +1425,9 @@ def _ensure_update_worktree(
     already pins the target SHA and ff-merges cleanly, or an
     ``ExitCode`` on failure.
     """
+    # First, so a ``.wt`` link with a missing target can't cost a branch.
+    if not _prepare_worktree_parent(wt_path):
+        return ExitCode.ERROR
     branch_exists = _git_branch_exists(consumer_root, branch)
     worktree_exists = wt_path.is_dir() and (wt_path / ".git").exists()
 
@@ -1429,7 +1457,6 @@ def _ensure_update_worktree(
         # Stray worktree dir without a tracked branch; clean up.
         _remove_worktree(consumer_root, wt_path)
 
-    wt_path.parent.mkdir(parents=True, exist_ok=True)
     create = sp.run(
         [
             "git",
@@ -1444,7 +1471,7 @@ def _ensure_update_worktree(
         check=False,
     )
     if create.returncode != 0:
-        _eprint(f"git worktree add failed for {wt_path}; resolve and rerun.")
+        _report_worktree_add_failure(wt_path)
         return ExitCode.ERROR
     return "needs-work"
 

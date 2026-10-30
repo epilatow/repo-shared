@@ -128,6 +128,24 @@ def test_main_checkout_owns_scratch_for_linked_worktrees(
     assert observation["count"] == 3
 
 
+@pytest.mark.parametrize("isolated", [False, True])
+def test_scratch_lands_on_the_target_of_a_symlinked_tmp(
+    tmp_path: Path, isolated: bool
+) -> None:
+    repo = _probe_repo(tmp_path / "main checkout")
+    storage = tmp_path / "local-storage"
+    storage.mkdir()
+    (repo / "tmp").symlink_to(storage, target_is_directory=True)
+    linked = repo / ".wt" / "feature"
+    _git(repo, "worktree", "add", "-b", "feature", str(linked))
+    observation = _run_probe(
+        linked, tmp_path / "record.json", isolated=isolated
+    )
+    base = Path(observation["base"]).resolve()
+    assert base.is_relative_to(storage.resolve() / "pytest")
+    assert (repo / "tmp").is_symlink()
+
+
 @pytest.mark.parametrize("linked", [False, True])
 def test_separate_git_metadata_does_not_own_scratch(
     tmp_path: Path, linked: bool

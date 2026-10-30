@@ -13,7 +13,13 @@ _UV_BOUNDARY = '[tool.uv.workspace]\nmembers = []\nexclude = ["**"]\n'
 
 def prepare_scratch_parent(parent: Path) -> None:
     """Keep nested uv fixtures outside their enclosing repo's workspace."""
-    parent.mkdir(parents=True, exist_ok=True)
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+    except FileExistsError as error:
+        raise ValueError(
+            f"Cannot create pytest scratch {parent}: {error}. Restore the "
+            "target of a dangling symlink, or set PYTEST_DEBUG_TEMPROOT."
+        ) from error
     boundary = parent / "pyproject.toml"
     if boundary.exists():
         if boundary.read_text(encoding="ascii") != _UV_BOUNDARY:
