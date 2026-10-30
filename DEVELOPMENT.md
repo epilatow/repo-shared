@@ -50,6 +50,11 @@ isolated from consumer pytest startup; explicit upgrade test commands and
 ordinary pytest runs do not. Cover both routes when changing the shared runner
 or upgrade test dispatch.
 
+Consumers under test run on the Python in `.python-version`, the oldest one a
+real consumer runs. `test_delivered_tests_e2e.py` also runs the delivered gates
+and a wrapper `upgrade` in consumers on `_NEWEST_CONSUMER_PYTHON`; raise that
+when consumers move to a newer release.
+
 ## Bumping pinned tool deps (ruff / mypy / mdformat)
 
 The shared test bases shell out to `python -m ruff` / `mypy` / `mdformat` from

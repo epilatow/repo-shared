@@ -7,8 +7,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import pytest
 
 if TYPE_CHECKING:
     from epilatow_repo_shared.exit_codes import ExitCode
@@ -17,6 +20,24 @@ if TYPE_CHECKING:
 # stand-in suites, kept as real files, where the quality gates check
 # the Python ones.
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+REPO_ROOT = FIXTURES.parent.parent
+
+# The oldest Python a consumer runs, which this repo's own environments
+# also use.
+PYTHON_FLOOR = (REPO_ROOT / ".python-version").read_text().strip()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _consumers_use_the_python_floor() -> Iterator[None]:
+    """Run test consumers on the floor unless a test pins another Python.
+
+    A consumer carries no pin, so uv would otherwise pick whichever
+    Python the machine prefers, and the oldest one a consumer needs
+    could go unexercised.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("UV_PYTHON", PYTHON_FLOOR)
+        yield
 
 
 def git_init_repo(repo: Path) -> None:

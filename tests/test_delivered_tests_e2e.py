@@ -12,7 +12,10 @@ This module closes that gap directly:
 - Collection: pytest discovery in a fresh consumer must list every
   delivered test file.
 - Clean pass: the delivered tests pass against a minimal post-init
-  consumer.
+  consumer, on the oldest and the newest Python consumers run.
+- Wrapper upgrade: ``upgrade --run-tests`` through the vendored
+  wrapper, on the same two Pythons. In-process tests run ``cli.py`` on
+  this repo's own Python; a consumer runs it on theirs.
 - Failure-case detection: planting a lint-failing ``.py`` and an
   unformatted ``.md`` in the consumer must cause the relevant
   delivered test to reject -- so the bases as delivered actually
@@ -30,12 +33,14 @@ cost is paid once.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
-from conftest import FIXTURES, run_cli
+from conftest import FIXTURES, PYTHON_FLOOR, REPO_ROOT, git_in, run_cli
 
 # Reuse the fake-source builder from the upgrade integration tests so a
 # regression in one path doesn't go undetected here. The helper is
@@ -43,8 +48,10 @@ from conftest import FIXTURES, run_cli
 # puts ``tests/`` on ``sys.path``, so the import works at collection
 # time.
 from test_cli_integration import (
+    _add_bump_commit,
     _clone_fake_source,
     _plant_consumer_startup_traps,
+    _setup_consumer_no_origin,
 )
 
 from epilatow_repo_shared import cli
@@ -55,12 +62,27 @@ _NPX_REQUIRED = pytest.mark.skipif(
     reason="npx not on PATH; markdownlint delivered test cannot run",
 )
 
+# The newest Python consumers run. A pass on the floor says nothing
+# about what a newer release removed or changed, or about compiled
+# dependencies' separate builds for it.
+_NEWEST_CONSUMER_PYTHON = "3.15"
+
 
 @pytest.fixture(scope="module")
 def _shared_fake_source(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Single fake-source clone of repo-shared, shared across this module."""
     parent = tmp_path_factory.mktemp("fake_source_parent")
     return _clone_fake_source(parent / "fake-source")
+
+
+@pytest.fixture(params=[PYTHON_FLOOR, _NEWEST_CONSUMER_PYTHON])
+def _consumer_python(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    """Pin the Python of a consumer created after this fixture runs."""
+    python: str = request.param
+    monkeypatch.setenv("UV_PYTHON", python)
+    return python
 
 
 @pytest.fixture
@@ -104,6 +126,29 @@ def _pytest_in(consumer: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _environment_python(project: Path) -> str:
+    """Return the ``major.minor`` Python ``uv run`` uses in ``project``."""
+    result = subprocess.run(
+        ["uv", "run", "python", "--version"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    version = re.match(r"Python (\d+\.\d+)", result.stdout)
+    assert version, result.stdout
+    return version.group(1)
+
+
+def _plant_python_file(consumer: Path) -> Path:
+    """Add a clean file; the ruff and mypy gates skip without one."""
+    path = consumer / "gate_target.py"
+    # Lint data for the gates; nothing runs it, so it stays inline.
+    path.write_text('"""Gate target."""\n')
+    return path
+
+
 def _plant_local_marker_test(consumer: Path) -> Path:
     """Add a local test whose marker proves its test body ran."""
     tests_dir = consumer / "tests"
@@ -135,13 +180,68 @@ def test_all_delivered_tests_collected_in_init_consumer(
 
 
 @_NPX_REQUIRED
-def test_delivered_tests_pass_on_clean_init_consumer(_consumer: Path) -> None:
+def test_delivered_tests_pass_on_clean_init_consumer(
+    _consumer_python: str, _consumer: Path
+) -> None:
+    _plant_python_file(_consumer)
     result = _pytest_in(_consumer, "_repo_shared/tests")
     assert result.returncode == 0, (
         f"delivered tests failed against a clean consumer:\n"
         f"--- stdout ---\n{result.stdout}\n"
         f"--- stderr ---\n{result.stderr}"
     )
+    assert "skipped" not in result.stdout, result.stdout
+    assert _environment_python(_consumer) == _consumer_python
+
+
+@_NPX_REQUIRED
+def test_wrapper_upgrade_runs_on_the_consumer_python(
+    _consumer_python: str, tmp_path: Path
+) -> None:
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    source_url = f"git+file://{fake_source}"
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_no_origin(consumer, source_url)
+    _plant_python_file(consumer)
+    git_in(consumer, "add", "gate_target.py")
+    git_in(consumer, "commit", "-m", "add a file for the python gates")
+    sha = _add_bump_commit(fake_source)
+
+    result = subprocess.run(
+        [
+            str(consumer / "_repo_shared" / "repo-shared"),
+            "upgrade",
+            sha,
+            "--source",
+            source_url,
+            "--run-tests",
+        ],
+        cwd=consumer,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+
+    assert result.returncode == 0, (
+        f"wrapper upgrade failed:\n"
+        f"--- stdout ---\n{result.stdout}\n"
+        f"--- stderr ---\n{result.stderr}"
+    )
+    assert "tests passed" in result.stdout
+    assert "skipped" not in result.stdout, result.stdout
+    update = consumer / ".wt" / f"repo-shared-update-{sha[:7]}"
+    assert _environment_python(update) == _consumer_python
+
+
+def test_consumers_default_to_the_python_floor(_consumer: Path) -> None:
+    assert _environment_python(_consumer) == PYTHON_FLOOR
+
+
+def test_python_floor_matches_the_package_requirement() -> None:
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    assert pyproject["project"]["requires-python"] == f">={PYTHON_FLOOR}"
 
 
 @_NPX_REQUIRED
