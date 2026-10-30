@@ -9,6 +9,10 @@ package ``epilatow-repo-shared``" and the documented onboarding flow
 breaks at the user's first command. This test catches that drift
 statically (no subprocess) so a README edit + pyproject rename can't
 ship together silently.
+
+The README also states the supported Python range, which consumers
+adjust their own ``requires-python`` to, so it must match this
+package's.
 """
 
 from __future__ import annotations
@@ -22,6 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # ``uvx --from "<url>"`` followed by the first non-flag token; tolerant
 # of backslash-continued shell lines that get joined before matching.
 _UVX_FROM_PATTERN = re.compile(r'uvx\s+--from\s+"[^"]+"\s+(\S+)')
+
+# Whitespace-tolerant so a README reflow can't break the match.
+_PYTHON_RANGE_PATTERN = re.compile(r"supports\s+Python\s+`([^`]+)`")
 
 
 def test_readme_uvx_invocations_match_project_scripts() -> None:
@@ -49,3 +56,13 @@ def test_readme_uvx_invocations_match_project_scripts() -> None:
             f"(known: {sorted(scripts)!r}). Either fix the README or "
             f"add the entry to pyproject's [project.scripts]."
         )
+
+
+def test_readme_python_range_matches_requires_python() -> None:
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    documented = _PYTHON_RANGE_PATTERN.search(readme)
+    assert documented, "no `supports Python ...` statement found in README"
+    assert documented.group(1) == pyproject["project"]["requires-python"]

@@ -501,7 +501,7 @@ def test_init_adds_dep_to_pre_existing_pyproject_without_clobbering(
         'name = "preexisting-consumer"\n'
         'version = "0.0.1"\n'
         'description = "Pre-existing project; init must not clobber."\n'
-        'requires-python = ">=3.15,<3.16"\n'
+        'requires-python = ">=3.14,<3.15"\n'
         'dependencies = ["packaging"]\n'
     )
     (tmp_path / "pyproject.toml").write_text(existing)
@@ -518,7 +518,7 @@ def test_init_adds_dep_to_pre_existing_pyproject_without_clobbering(
         'description = "Pre-existing project; init must not clobber."' in text
     )
     assert '"packaging"' in text
-    assert 'requires-python = ">=3.15,<3.16"' in text
+    assert 'requires-python = ">=3.14,<3.15"' in text
     # The dep + source got inserted.
     assert '"epilatow-repo-shared"' in text
     assert "[tool.uv.sources]" in text

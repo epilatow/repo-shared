@@ -132,7 +132,7 @@ the test suite:
   immediately rather than silently leaving markdownlint unenforced.
 - **Git**: `upgrade` works in a worktree under `<consumer>/.wt/`.
 
-repo-shared supports Python `>=3.15,<3.16`. Before onboarding or upgrading an
+repo-shared supports Python `>=3.14`. Before onboarding or upgrading an
 existing project, adjust its `requires-python` to a compatible range; these
 commands preserve existing requirements and fail if they are incompatible.
 
