@@ -489,6 +489,22 @@ def test_compose_bumped_pyproject_returns_none_on_missing_pin() -> None:
     assert _compose_bumped_pyproject(_PYPROJECT_WITH_PINS, bumps) is None
 
 
+def _uv_lock_result(
+    cmd: list[str], *, conflict: bool
+) -> subprocess.CompletedProcess[str]:
+    """Return what ``uv lock`` reports for a resolvable or conflicting set."""
+    if conflict:
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=1,
+            stdout="",
+            stderr="error: No solution found when resolving dependencies\n",
+        )
+    return subprocess.CompletedProcess(
+        args=cmd, returncode=0, stdout="", stderr=""
+    )
+
+
 def _stub_uv_lock_rejecting(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -510,10 +526,7 @@ def _stub_uv_lock_rejecting(
         if cmd[:2] == ["uv", "lock"]:
             snapshot = wt_pyproject.read_text()
             snapshots.append(snapshot)
-            rc = 1 if forbidden in snapshot else 0
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=rc, stdout="", stderr=""
-            )
+            return _uv_lock_result(cmd, conflict=forbidden in snapshot)
         return subprocess.CompletedProcess(
             args=cmd, returncode=0, stdout="", stderr=""
         )
@@ -616,10 +629,7 @@ def test_resolve_compatible_bumps_returns_empty_when_every_bump_conflicts(
             text = wt_pyproject.read_text()
             snapshots.append(text)
             # Any deviation from the original pin set fails.
-            rc = 0 if text == _PYPROJECT_WITH_PINS else 1
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=rc, stdout="", stderr=""
-            )
+            return _uv_lock_result(cmd, conflict=text != _PYPROJECT_WITH_PINS)
         return subprocess.CompletedProcess(
             args=cmd, returncode=0, stdout="", stderr=""
         )

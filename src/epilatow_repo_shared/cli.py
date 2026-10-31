@@ -721,6 +721,18 @@ def _compose_bumped_pyproject(
     return text
 
 
+class LockFailedError(Exception):
+    """``uv lock`` failed for a reason other than a version conflict."""
+
+
+# uv's report for requirements with no solution. Its exit status alone
+# can't tell this from other failures such as a package that won't build.
+# It also covers a version the index doesn't list, such as a release PyPI's
+# API announced before its index caught up: that bump is skipped like a
+# conflict, and a later run picks it up.
+_UV_NO_SOLUTION = "No solution found"
+
+
 def _try_bump_set(
     *,
     wt_path: Path,
@@ -730,10 +742,15 @@ def _try_bump_set(
 ) -> bool:
     """Write ``bumps`` into ``wt_pyproject`` and run ``uv lock``.
 
-    Returns ``True`` iff lock succeeds. On failure the pyproject is
-    left in the attempted state -- callers iterating across sets are
-    expected to call again with a different set, which overwrites
-    pyproject before the next lock.
+    Returns ``True`` iff lock succeeds and ``False`` on a version
+    conflict. After a conflict the pyproject is left in the attempted
+    state -- callers iterating across sets are expected to call again
+    with a different set, which overwrites pyproject before the next
+    lock.
+
+    Raises ``LockFailedError`` on any other failure: a registry outage
+    says nothing about whether these bumps can land together. uv's
+    report goes to stderr either way.
     """
     text = _compose_bumped_pyproject(original_text, bumps)
     if text is None:
@@ -742,10 +759,17 @@ def _try_bump_set(
     result = sp.run(
         ["uv", "lock"],
         cwd=wt_path,
+        stderr=subprocess.PIPE,
+        text=True,
         check=False,
         timeout=sp.LONG_TIMEOUT_SECONDS,
     )
-    return result.returncode == 0
+    sys.stderr.write(result.stderr)
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1 and _UV_NO_SOLUTION in result.stderr:
+        return False
+    raise LockFailedError
 
 
 def _resolve_compatible_bumps(
@@ -772,6 +796,9 @@ def _resolve_compatible_bumps(
     release lands on PyPI before its plugin ecosystem catches up
     and conflicts with a plugin's requirements. The non-conflicting
     bumps still land instead of the whole transaction failing.
+
+    Any other lock failure propagates as ``LockFailedError`` rather
+    than dropping a bump that might have landed.
     """
     if _try_bump_set(
         wt_path=wt_path,
@@ -820,6 +847,21 @@ def _resolve_compatible_bumps(
     return accepted, skipped
 
 
+def _no_bump_exit(unchecked: list[str]) -> ExitCode:
+    """Return the exit status of a run that landed no bump.
+
+    A pin PyPI couldn't answer for may be stale, so nightly automation
+    has to hear about it instead of seeing a clean no-op.
+    """
+    if not unchecked:
+        return ExitCode.SUCCESS
+    _eprint(
+        "no bumps landed, and PyPI could not be queried for: "
+        f"{', '.join(unchecked)}."
+    )
+    return ExitCode.ERROR
+
+
 def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
     """Bump pinned tool deps in repo-shared's pyproject (worktree).
 
@@ -841,6 +883,13 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
     the same external shape: worktree + branch removed, no commit
     landed, ``ExitCode.SUCCESS``. Both shapes are safe for nightly
     automation.
+
+    An outage is not a no-op, so it reaches that automation as a
+    failure: ``ExitCode.ERROR`` when nothing landed and PyPI couldn't
+    answer for a pin, ``ExitCode.SUBPROCESS`` for a ``uv lock`` failure
+    other than a version conflict. Either way no worktree or branch
+    stays behind to block the next run; pins PyPI did answer for still
+    land when only some queries fail.
 
     Maintainer-only -- a runtime guard via
     ``_running_from_local_repo_shared()`` rejects invocation from
@@ -905,10 +954,12 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
         return ExitCode.SUCCESS
 
     bumps: list[tuple[str, str, str]] = []
+    unchecked: list[str] = []
     for name, current in pinned:
         latest = _query_pypi_latest(name)
         if latest is None:
             _eprint(f"  {name}: could not query PyPI; skipping.")
+            unchecked.append(name)
             continue
         if latest == current:
             print(f"  {name}: up to date ({current}).")
@@ -917,11 +968,12 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
             bumps.append((name, current, latest))
 
     if not bumps:
-        # Cheap exit: every pin is up to date, no worktree spun
-        # up, no branch created. Nightly automation that wakes up
-        # to a quiet PyPI leaves no state behind.
-        print("every pinned tool is up to date.")
-        return ExitCode.SUCCESS
+        # Cheap exit: no worktree spun up, no branch created. Nightly
+        # automation that wakes up to a quiet PyPI leaves no state
+        # behind.
+        if not unchecked:
+            print("every pinned tool is up to date.")
+        return _no_bump_exit(unchecked)
 
     if not _git_is_clean(repo_root):
         _eprint(
@@ -955,21 +1007,35 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
             )
             return ExitCode.ERROR
 
-        accepted, skipped = _resolve_compatible_bumps(
-            wt_path=wt_path,
-            wt_pyproject=wt_pyproject,
-            original_text=original_text,
-            bumps=bumps,
-        )
+        try:
+            accepted, skipped = _resolve_compatible_bumps(
+                wt_path=wt_path,
+                wt_pyproject=wt_pyproject,
+                original_text=original_text,
+                bumps=bumps,
+            )
+        except LockFailedError:
+            _eprint(
+                "uv lock failed for a reason other than a version "
+                "conflict; uv's report is above. No bumps landed."
+            )
+            _remove_worktree(repo_root, wt_path)
+            _delete_branch(repo_root, branch)
+            return ExitCode.SUBPROCESS
+        except subprocess.TimeoutExpired:
+            _remove_worktree(repo_root, wt_path)
+            _delete_branch(repo_root, branch)
+            raise
         for name, old, new in skipped:
             print(f"  skipped (conflict): {name} {old} -> {new}")
         if not accepted:
             # No accepted bumps means pyproject is back at its
             # pre-bump state with nothing for the maintainer to
-            # inspect, so the worktree + branch are removed and the
-            # run exits SUCCESS for nightly automation's sake. The
-            # next run re-queries PyPI and picks up any release that
-            # has since become installable against the existing pins.
+            # inspect, so the worktree + branch are removed. Conflicts
+            # alone aren't a failure, for nightly automation's sake.
+            # The next run re-queries PyPI and picks up any release
+            # that has since become installable against the existing
+            # pins.
             print(
                 "no upstream-compatible bumps available this run "
                 "(every candidate conflicts with the existing pin "
@@ -977,7 +1043,7 @@ def _cmd_upgrade_tools(args: argparse.Namespace) -> ExitCode:
             )
             _remove_worktree(repo_root, wt_path)
             _delete_branch(repo_root, branch)
-            return ExitCode.SUCCESS
+            return _no_bump_exit(unchecked)
         bumps = accepted
     else:
         print(f"resuming existing bump worktree at {wt_path}.")

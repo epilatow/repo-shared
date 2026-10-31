@@ -88,6 +88,11 @@ and the rest land. If none can land, the run exits cleanly without a commit:
 nothing can be done until the upstream catches up, so nightly automation
 shouldn't page.
 
+An outage says nothing about the pins, so it does page. A `uv lock` failure
+other than a version conflict discards the attempt and exits 5. A pin PyPI
+can't answer for is skipped while the others land, but a run that lands nothing
+because of one exits 4 rather than reporting the pins current.
+
 `upgrade-tools` is hidden from consumers' `--help` and refuses to run outside a
 repo-shared clone.
 

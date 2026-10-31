@@ -24,6 +24,7 @@ import shutil
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from conftest import (
@@ -34,10 +35,25 @@ from conftest import (
     run_cli,
 )
 
-from epilatow_repo_shared import cli
+from epilatow_repo_shared import cli, sp
 from epilatow_repo_shared.exit_codes import ExitCode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+_LOCKED = subprocess.CompletedProcess[str](
+    [], 0, stderr="Resolved 3 packages\n"
+)
+_CONFLICT = subprocess.CompletedProcess[str](
+    [], 1, stderr="error: No solution found when resolving dependencies\n"
+)
+_OUTAGE = subprocess.CompletedProcess[str](
+    [], 2, stderr="error: Failed to fetch: https://pypi.org/simple/ruff/\n"
+)
+_BUILD_FAILURE = subprocess.CompletedProcess[str](
+    [], 1, stderr="error: Failed to build `ruff==1.1`\n"
+)
+_RUFF_BUMP = ("ruff", "1.0", "1.1")
+_MYPY_BUMP = ("mypy", "2.0", "2.1")
 
 
 def _build_fake_clone(
@@ -135,6 +151,40 @@ def _stub_pypi(
     monkeypatch.setattr(cli, "_query_pypi_latest", fake)
 
 
+def _resolve_bumps(
+    tmp_path: Path, bumps: list[tuple[str, str, str]]
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+    pyproject = tmp_path / "pyproject.toml"
+    text = 'dependencies = ["ruff==1.0", "mypy==2.0"]\n'
+    pyproject.write_text(text)
+    return cli._resolve_compatible_bumps(
+        wt_path=tmp_path,
+        wt_pyproject=pyproject,
+        original_text=text,
+        bumps=bumps,
+    )
+
+
+def _assert_attempt_discarded(
+    clone: Path, bumps: list[tuple[str, str, str]]
+) -> None:
+    bump_hash = cli._tool_bump_hash(bumps)
+    wt_path = clone / ".wt" / f"repo-shared-tool-bump-{bump_hash}"
+    assert not wt_path.exists()
+    branch_check = subprocess.run(
+        [
+            "git",
+            "rev-parse",
+            "--verify",
+            f"refs/heads/repo-shared/tool-bump-{bump_hash}",
+        ],
+        cwd=clone,
+        capture_output=True,
+        check=False,
+    )
+    assert branch_check.returncode != 0, "bump branch should be deleted"
+
+
 def test_upgrade_tools_refuses_from_consumer(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -205,6 +255,42 @@ def test_upgrade_tools_no_op_when_pypi_matches_current_pins(
     # No worktree should have been spun up.
     wt_parent = fake_clone / ".wt"
     assert not wt_parent.exists()
+
+
+def test_upgrade_tools_does_not_call_unchecked_pins_up_to_date(
+    fake_clone: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pinned = dict(
+        cli._read_pinned_deps((fake_clone / "pyproject.toml").read_text())
+    )
+    _stub_pypi(monkeypatch, {})
+
+    assert run_cli(["upgrade-tools"]) == ExitCode.ERROR
+
+    captured = capsys.readouterr()
+    assert "up to date" not in captured.out
+    for name in pinned:
+        assert name in captured.err.splitlines()[-1]
+    assert not (fake_clone / ".wt").exists()
+
+
+def test_upgrade_tools_fails_when_one_pin_goes_unchecked_and_none_bump(
+    fake_clone: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pinned = dict(
+        cli._read_pinned_deps((fake_clone / "pyproject.toml").read_text())
+    )
+    _stub_pypi(monkeypatch, {**pinned, "ruff": None})
+
+    assert run_cli(["upgrade-tools"]) == ExitCode.ERROR
+
+    captured = capsys.readouterr()
+    assert "every pinned tool is up to date." not in captured.out
+    assert captured.err.splitlines()[-1].endswith("queried for: ruff.")
 
 
 @pytest.mark.usefixtures("fake_clone")
@@ -288,6 +374,31 @@ def test_upgrade_tools_bumps_one_pin_in_worktree(
     ).strip()
     assert log.startswith("- deps: bump ")
     assert " from " in log and " to " in log and log.endswith(".")
+
+
+def test_upgrade_tools_lands_a_bump_beside_an_unchecked_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pinned = dict(
+        cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
+    )
+    current_ruff = pinned["ruff"]
+    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
+    _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff, "mypy": None})
+
+    assert run_cli(["upgrade-tools"]) == ExitCode.SUCCESS
+
+    assert "mypy: could not query PyPI; skipping." in capsys.readouterr().err
+    bumps = [("ruff", "0.5.0", current_ruff)]
+    bump_hash = cli._tool_bump_hash(bumps)
+    wt_path = clone / ".wt" / f"repo-shared-tool-bump-{bump_hash}"
+    log = subprocess.check_output(
+        ["git", "log", "-1", "--pretty=%s"], cwd=wt_path, text=True
+    ).strip()
+    assert log == f"- deps: bump ruff from 0.5.0 to {current_ruff}."
 
 
 @pytest.mark.parametrize(
@@ -388,22 +499,153 @@ def test_upgrade_tools_exits_clean_when_every_bump_conflicts(
     out = capsys.readouterr().out
     assert "no upstream-compatible bumps available this run" in out
     assert "skipped (conflict): ruff 0.5.0" in out
+    _assert_attempt_discarded(clone, bumps)
 
-    bump_hash = cli._tool_bump_hash(bumps)
-    wt_path = clone / ".wt" / f"repo-shared-tool-bump-{bump_hash}"
-    assert not wt_path.exists()
-    branch_check = subprocess.run(
-        [
-            "git",
-            "rev-parse",
-            "--verify",
-            f"refs/heads/repo-shared/tool-bump-{bump_hash}",
-        ],
-        cwd=clone,
-        capture_output=True,
-        check=False,
+
+def test_upgrade_tools_conflict_beside_an_unchecked_pin_is_a_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pinned = dict(
+        cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
     )
-    assert branch_check.returncode != 0, "bump branch should be deleted"
+    current_ruff = pinned["ruff"]
+    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
+    _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff, "mypy": None})
+    bumps = [("ruff", "0.5.0", current_ruff)]
+
+    def fake_resolve(
+        **_: object,
+    ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+        return ([], list(bumps))
+
+    monkeypatch.setattr(cli, "_resolve_compatible_bumps", fake_resolve)
+
+    assert run_cli(["upgrade-tools"]) == ExitCode.ERROR
+
+    assert (
+        capsys.readouterr().err.splitlines()[-1].endswith("queried for: mypy.")
+    )
+    _assert_attempt_discarded(clone, bumps)
+
+
+def test_upgrade_tools_outage_discards_the_attempt_and_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pinned = dict(
+        cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
+    )
+    current_ruff = pinned["ruff"]
+    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
+    _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
+    monkeypatch.setenv("UV_DEFAULT_INDEX", "http://127.0.0.1:9/simple")
+    monkeypatch.setenv("UV_HTTP_RETRIES", "0")
+    monkeypatch.setenv("UV_NO_CACHE", "1")
+
+    exit_code = run_cli(["upgrade-tools", "--only", "ruff"])
+
+    assert exit_code == ExitCode.SUBPROCESS
+    captured = capsys.readouterr()
+    assert "Failed to fetch" in captured.err
+    assert "other than a version conflict" in captured.err
+    assert "skipped (conflict)" not in captured.out
+    _assert_attempt_discarded(clone, [("ruff", "0.5.0", current_ruff)])
+
+
+def test_upgrade_tools_lock_timeout_discards_the_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pinned = dict(
+        cli._read_pinned_deps((REPO_ROOT / "pyproject.toml").read_text())
+    )
+    current_ruff = pinned["ruff"]
+    clone = _build_fake_clone(tmp_path, pin_overrides={"ruff": "0.5.0"})
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: clone)
+    _stub_pypi(monkeypatch, {**pinned, "ruff": current_ruff})
+
+    def fake_resolve(**_: object) -> None:
+        raise subprocess.TimeoutExpired(["uv", "lock"], 600)
+
+    monkeypatch.setattr(cli, "_resolve_compatible_bumps", fake_resolve)
+
+    assert run_cli(["upgrade-tools", "--only", "ruff"]) == ExitCode.TIMEOUT
+    _assert_attempt_discarded(clone, [("ruff", "0.5.0", current_ruff)])
+
+
+@pytest.mark.parametrize(
+    "outcomes",
+    [
+        pytest.param([_OUTAGE], id="first-lock"),
+        pytest.param([_BUILD_FAILURE], id="unbuildable-package"),
+        pytest.param([_CONFLICT, _LOCKED, _OUTAGE], id="during-sweep"),
+        pytest.param(
+            [_CONFLICT, _LOCKED, _CONFLICT, _OUTAGE], id="final-flush"
+        ),
+    ],
+)
+def test_resolve_stops_at_a_lock_failure_that_is_not_a_conflict(
+    tmp_path: Path, outcomes: list[subprocess.CompletedProcess[str]]
+) -> None:
+    with patch.object(sp, "run", autospec=True) as run:
+        run.side_effect = outcomes
+        with pytest.raises(cli.LockFailedError):
+            _resolve_bumps(tmp_path, [_RUFF_BUMP, _MYPY_BUMP])
+    assert run.call_count == len(outcomes)
+
+
+def _write_lockable_project(tmp_path: Path, requirement: str) -> str:
+    text = (
+        '[project]\nname = "probe"\nversion = "0"\n'
+        'requires-python = ">=3.14"\n'
+        f'dependencies = ["ruff==1.0", "{requirement}"]\n'
+    )
+    (tmp_path / "pyproject.toml").write_text(text)
+    return text
+
+
+def test_uv_reports_a_real_conflict_the_way_we_read_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The bumped pin and the cap exclude every version, so uv reports the
+    # conflict offline, whatever its cache holds.
+    text = _write_lockable_project(tmp_path, "ruff<1.1")
+    monkeypatch.setenv("UV_OFFLINE", "1")
+
+    assert not cli._try_bump_set(
+        wt_path=tmp_path,
+        wt_pyproject=tmp_path / "pyproject.toml",
+        original_text=text,
+        bumps=[_RUFF_BUMP],
+    )
+
+    report = capsys.readouterr().err
+    assert "ruff==1.1" in report
+    assert "ruff<1.1" in report
+
+
+def test_uv_reports_a_real_outage_the_way_we_read_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = _write_lockable_project(tmp_path, "pytest")
+    monkeypatch.setenv("UV_DEFAULT_INDEX", "http://127.0.0.1:9/simple")
+    monkeypatch.setenv("UV_HTTP_RETRIES", "0")
+    monkeypatch.setenv("UV_NO_CACHE", "1")
+
+    with pytest.raises(cli.LockFailedError):
+        cli._try_bump_set(
+            wt_path=tmp_path,
+            wt_pyproject=tmp_path / "pyproject.toml",
+            original_text=text,
+            bumps=[_RUFF_BUMP],
+        )
 
 
 def test_upgrade_tools_dogfood_failure_leaves_resumable_worktree(
