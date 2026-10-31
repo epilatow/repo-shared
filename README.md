@@ -232,6 +232,11 @@ Useful flags:
   test-command = "uv run pytest"
   ```
 
+  The run gets 600 seconds. To change that, for `run-tests` too, set
+  `test-timeout` in the same table to a positive whole number of seconds.
+  Hitting the limit exits 9 (`TIMEOUT`), and `upgrade` leaves the worktree for
+  inspection.
+
 - `--push` implies `--run-tests`. On green it fast-forwards your default branch
   to the update, pushes it, and removes the worktree and branch
   (`--keep-worktree` keeps them). It runs `git push --dry-run` before any

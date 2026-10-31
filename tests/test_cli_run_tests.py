@@ -254,3 +254,76 @@ def test_explicit_test_command_preserves_consumer_invocation(
         f"[tool.repo-shared]\ntest-command = {value}\n"
     )
     assert cli._read_test_command(tmp_path) == expected
+
+
+@pytest.mark.parametrize("text", ["tool = 1\n", "[tool]\nrepo-shared = 1\n"])
+def test_table_that_is_not_one_selects_the_defaults(
+    tmp_path: Path, text: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(text)
+    assert cli._read_test_command(tmp_path) is None
+    assert cli._read_test_timeout(tmp_path) == sp.LONG_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize(
+    "text",
+    [None, "invalid toml", "[project]\nname = 'consumer'\n"],
+)
+def test_unset_test_timeout_uses_the_default_silently(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str | None
+) -> None:
+    if text is not None:
+        (tmp_path / "pyproject.toml").write_text(text)
+    assert cli._read_test_timeout(tmp_path) == sp.LONG_TIMEOUT_SECONDS
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "1.5", "true", "'900'", "[]"])
+def test_invalid_test_timeout_warns_and_uses_the_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], value: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        f"[tool.repo-shared]\ntest-timeout = {value}\n"
+    )
+    assert cli._read_test_timeout(tmp_path) == sp.LONG_TIMEOUT_SECONDS
+    assert "test-timeout must be" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("seconds", [1, 1800])
+def test_shared_runner_uses_the_configured_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seconds: int
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        f"[tool.repo-shared]\ntest-timeout = {seconds}\n"
+    )
+    monkeypatch.setattr(
+        cli, "default_pytest_temproot", lambda *_args: tmp_path
+    )
+    with patch.object(sp, "run", autospec=True) as run:
+        run.return_value = subprocess.CompletedProcess([], 0)
+        assert cli._run_shared_tests(tmp_path).returncode == 0
+    assert run.call_args.kwargs["timeout"] == seconds
+
+
+def test_run_tests_timeout_names_the_setting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    consumer = _onboard_fake_consumer(tmp_path)
+    (consumer / "pyproject.toml").write_text(
+        "[tool.repo-shared]\ntest-timeout = 7\n"
+    )
+    monkeypatch.setattr(cli, "_running_from_local_repo_shared", lambda: None)
+    monkeypatch.setattr(
+        cli, "default_pytest_temproot", lambda *_args: tmp_path
+    )
+
+    with patch.object(sp, "run", autospec=True) as run:
+        run.side_effect = subprocess.TimeoutExpired(["uv"], 7)
+        exit_code = run_cli(["run-tests", "--repo", str(consumer)])
+
+    assert exit_code == ExitCode.TIMEOUT
+    err = capsys.readouterr().err
+    assert "within 7s" in err
+    assert "test-timeout" in err

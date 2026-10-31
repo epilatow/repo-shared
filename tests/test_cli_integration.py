@@ -1572,6 +1572,83 @@ def test_upgrade_run_tests_failure_leaves_worktree_with_bump_commit(
     assert " to " in log_subject and log_subject.endswith(".")
 
 
+@pytest.mark.parametrize("flag", ["--run-tests", "--push"])
+def test_upgrade_test_command_stops_at_the_configured_timeout(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    flag: str,
+) -> None:
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_with_origin(
+        consumer,
+        f"git+file://{fake_source}",
+        pyproject_extras=(
+            "\n[tool.repo-shared]\n"
+            'test-command = "sleep 60"\n'
+            "test-timeout = 1\n"
+        ),
+    )
+    bump_sha = _add_bump_commit(fake_source)
+    before = git_in(consumer, "rev-parse", "main").stdout
+    capsys.readouterr()
+
+    exit_code = run_cli(
+        [
+            "upgrade",
+            bump_sha,
+            "--repo",
+            str(consumer),
+            "--source",
+            f"git+file://{fake_source}",
+            flag,
+        ]
+    )
+
+    assert exit_code == ExitCode.TIMEOUT
+    err = capsys.readouterr().err
+    assert "within 1s" in err
+    assert "test-timeout" in err
+    wt_path = consumer / ".wt" / f"repo-shared-update-{bump_sha[:7]}"
+    assert wt_path.is_dir(), "worktree should be kept for a retry"
+    assert git_in(consumer, "rev-parse", "main").stdout == before
+
+
+def test_upgrade_shared_runner_reports_the_timeout_setting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_with_origin(consumer, f"git+file://{fake_source}")
+    bump_sha = _add_bump_commit(fake_source)
+
+    def timed_out(_repo_root: Path) -> None:
+        raise subprocess.TimeoutExpired(["uv"], 600)
+
+    monkeypatch.setattr(cli, "_run_shared_tests", timed_out)
+    capsys.readouterr()
+
+    exit_code = run_cli(
+        [
+            "upgrade",
+            bump_sha,
+            "--repo",
+            str(consumer),
+            "--source",
+            f"git+file://{fake_source}",
+            "--run-tests",
+        ]
+    )
+
+    assert exit_code == ExitCode.TIMEOUT
+    assert "test-timeout" in capsys.readouterr().err
+    assert (consumer / ".wt" / f"repo-shared-update-{bump_sha[:7]}").is_dir()
+
+
 def test_upgrade_resumes_existing_worktree_on_re_run(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

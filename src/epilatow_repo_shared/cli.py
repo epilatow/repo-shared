@@ -1330,16 +1330,20 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
         return ExitCode.SUCCESS
 
     cmd = _read_test_command(wt_path)
-    if cmd is None:
-        test_result = _run_shared_tests(wt_path)
-    else:
-        print(f"running tests: {' '.join(cmd)}")
-        test_result = sp.run(
-            cmd,
-            cwd=wt_path,
-            check=False,
-            timeout=sp.LONG_TIMEOUT_SECONDS,
-        )
+    try:
+        if cmd is None:
+            test_result = _run_shared_tests(wt_path)
+        else:
+            print(f"running tests: {' '.join(cmd)}")
+            test_result = sp.run(
+                cmd,
+                cwd=wt_path,
+                check=False,
+                timeout=_read_test_timeout(wt_path),
+            )
+    except subprocess.TimeoutExpired as err:
+        _eprint(f"worktree {wt_path} kept; rerun ``upgrade`` to retry.")
+        return _report_test_timeout(err)
     if test_result.returncode != 0:
         _eprint(
             f"tests failed; worktree {wt_path} kept for debug. "
@@ -1784,6 +1788,25 @@ def _ff_merge_and_push_then_cleanup(
     return ExitCode.SUCCESS
 
 
+def _read_settings(repo_root: Path) -> dict[str, object]:
+    """Return ``[tool.repo-shared]``, or ``{}`` if it can't be read."""
+    pyproject = repo_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return {}
+    try:
+        import tomllib
+    except ImportError:
+        return {}
+    try:
+        with pyproject.open("rb") as fh:
+            data = tomllib.load(fh)
+    except OSError, tomllib.TOMLDecodeError:
+        return {}
+    tool = data.get("tool", {})
+    settings = tool.get("repo-shared", {}) if isinstance(tool, dict) else {}
+    return settings if isinstance(settings, dict) else {}
+
+
 def _read_test_command(repo_root: Path) -> list[str] | None:
     """Return the consumer-configured test command, or None for shared gates.
 
@@ -1791,19 +1814,7 @@ def _read_test_command(repo_root: Path) -> list[str] | None:
     -- a string is split on whitespace, a list is taken as-is. Missing
     or invalid configuration selects the isolated shared-only runner.
     """
-    pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file():
-        return None
-    try:
-        import tomllib
-    except ImportError:
-        return None
-    try:
-        with pyproject.open("rb") as fh:
-            data = tomllib.load(fh)
-    except OSError, tomllib.TOMLDecodeError:
-        return None
-    raw = data.get("tool", {}).get("repo-shared", {}).get("test-command")
+    raw = _read_settings(repo_root).get("test-command")
     if raw is None:
         return None
     if isinstance(raw, str):
@@ -1815,6 +1826,33 @@ def _read_test_command(repo_root: Path) -> list[str] | None:
         "strings; falling back to the default."
     )
     return None
+
+
+def _read_test_timeout(repo_root: Path) -> int:
+    """Return the seconds a consumer's test run may take.
+
+    Reads ``[tool.repo-shared] test-timeout`` from ``pyproject.toml``.
+    Missing or invalid configuration selects
+    ``sp.LONG_TIMEOUT_SECONDS``.
+    """
+    raw = _read_settings(repo_root).get("test-timeout")
+    if raw is None:
+        return sp.LONG_TIMEOUT_SECONDS
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    _eprint(
+        "[tool.repo-shared] test-timeout must be a positive whole number "
+        "of seconds; falling back to the default."
+    )
+    return sp.LONG_TIMEOUT_SECONDS
+
+
+def _report_test_timeout(err: subprocess.TimeoutExpired) -> ExitCode:
+    _eprint(
+        f"tests did not finish within {err.timeout}s. To allow longer, set "
+        "``[tool.repo-shared] test-timeout`` in pyproject.toml."
+    )
+    return ExitCode.TIMEOUT
 
 
 def _run_shared_tests(
@@ -1849,7 +1887,7 @@ def _run_shared_tests(
         cmd,
         cwd=repo_root,
         check=False,
-        timeout=sp.LONG_TIMEOUT_SECONDS,
+        timeout=_read_test_timeout(repo_root),
     )
 
 
@@ -1996,7 +2034,10 @@ def _cmd_run_tests(args: argparse.Namespace) -> ExitCode:
             "`repo-shared init` first to onboard this repo."
         )
         return ExitCode.CONFIG
-    result = _run_shared_tests(repo_root, verbose=args.verbose)
+    try:
+        result = _run_shared_tests(repo_root, verbose=args.verbose)
+    except subprocess.TimeoutExpired as err:
+        return _report_test_timeout(err)
     if result.returncode in (0, 1):
         return ExitCode(result.returncode)
     return ExitCode.ERROR
@@ -2145,7 +2186,9 @@ def args_parser() -> argparse.ArgumentParser:
         help=(
             "after the upgrade commit, run the consumer's test command "
             "(``[tool.repo-shared] test-command`` in pyproject.toml; "
-            "defaults to isolated shared-only tests). "
+            "defaults to isolated shared-only tests), limited to "
+            "``test-timeout`` seconds from the same table (default "
+            f"{sp.LONG_TIMEOUT_SECONDS}). "
             "Non-zero exit if tests fail; the commit stays in place "
             "for inspection."
         ),

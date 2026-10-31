@@ -11,10 +11,10 @@ cover every real use:
 - ``LONG_TIMEOUT_SECONDS`` (600s) -- anything that can block on the
   network or on a test runner: ``git fetch`` / ``push`` / ``ls-remote``,
   ``uv add`` / ``uv lock`` (which hit PyPI and git remotes), the
-  consumer's pytest run invoked by ``repo-shared upgrade
-  --run-tests`` / ``--push``, and the test-base classes' own tool
-  invocations (``mdformat``, ``markdownlint-cli2``, ``mypy --strict``)
-  which can take well over a minute on a moderate repo. Network ops
+  default limit on a consumer's test run, which its ``test-timeout``
+  can change, and the test-base classes' own tool invocations
+  (``mdformat``, ``markdownlint-cli2``, ``mypy --strict``) which can
+  take well over a minute on a moderate repo. Network ops
   share the long bucket because an unreachable remote can stall past
   the OS TCP-SYN budget (>60s on macOS), which is longer than the
   short timeout's entire budget.
