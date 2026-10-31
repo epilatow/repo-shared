@@ -43,7 +43,8 @@ covers both layers:
 - The delivered gates under `shared/tests/`, the same files consumers run, with
   no `[tool.repo-shared.*]` overrides, so this repo exercises the defaults a
   fresh consumer gets. A regression in the delivered test surface shows up here
-  first. The drift gate skips here because this repo is the source.
+  first. The drift and tool-pin gates skip here because this repo is the
+  source.
 
 Consumer `run-tests` and default upgrade validation run the delivered gates
 isolated from consumer pytest startup; explicit upgrade test commands and

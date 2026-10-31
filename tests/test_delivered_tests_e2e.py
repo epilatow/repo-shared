@@ -16,11 +16,12 @@ This module closes that gap directly:
 - Wrapper upgrade: ``upgrade --run-tests`` through the vendored
   wrapper, on the same two Pythons. In-process tests run ``cli.py`` on
   this repo's own Python; a consumer runs it on theirs.
-- Failure-case detection: planting a lint-failing ``.py`` and an
-  unformatted ``.md`` in the consumer must cause the relevant
-  delivered test to reject -- so the bases as delivered actually
-  enforce their rules in a consumer, not just against repo-shared's
-  own content via the dogfood ``testpaths``.
+- Failure-case detection: planting a lint-failing ``.py``, an
+  unformatted ``.md``, or an exact pin on a tool repo-shared pins in
+  the consumer must cause the relevant delivered test to reject -- so
+  the bases as delivered actually enforce their rules in a consumer,
+  not just against repo-shared's own content via the dogfood
+  ``testpaths``.
 - Phased execution: a green delivered suite proceeds into local tests,
   while any delivered failure prevents local test bodies from running.
 
@@ -56,6 +57,7 @@ from test_cli_integration import (
 
 from epilatow_repo_shared import cli
 from epilatow_repo_shared.exit_codes import ExitCode
+from epilatow_repo_shared.tool_pins import repo_shared_tool_pins
 
 _NPX_REQUIRED = pytest.mark.skipif(
     shutil.which("npx") is None,
@@ -172,6 +174,7 @@ def test_all_delivered_tests_collected_in_init_consumer(
         "test_markdownlint.py",
         "test_repo_shared_drift.py",
         "test_in_sync.py",
+        "test_tool_pins.py",
     ):
         assert delivered in output, (
             f"{delivered} missing from pytest collection -- testpaths "
@@ -262,6 +265,23 @@ def test_code_quality_rejects_lint_violation_in_consumer(
     assert "lint_me.py" in combined, (
         "Failure output should name the offending file:\n" + combined
     )
+
+
+def test_tool_pin_gate_rejects_a_pin_the_resolver_accepts(
+    _consumer: Path,
+) -> None:
+    # Matches repo-shared's pin, so the consumer locks and syncs today.
+    # The conflict only arrives with the next bump.
+    pin = repo_shared_tool_pins()["mypy"]
+    pyproject = _consumer / "pyproject.toml"
+    pyproject.write_text(
+        f'{pyproject.read_text()}\n[dependency-groups]\ndev = ["{pin}"]\n'
+    )
+
+    result = _pytest_in(_consumer, "_repo_shared/tests/test_tool_pins.py")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert f"dependency-groups.dev: {pin}" in result.stdout
 
 
 @_NPX_REQUIRED

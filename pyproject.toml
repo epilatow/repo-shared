@@ -29,6 +29,11 @@ dependencies = [
     # repo-root-relative paths against it. Pinned so every
     # consumer at a given SHA gets identical matching.
     "pathspec==1.1.1",
+    # packaging parses requirements for the delivered tool-pin gate.
+    # Unpinned: its results don't vary by consumer the way a tool's
+    # do, and an exact pin would be one more constraint on every
+    # consumer's resolver.
+    "packaging",
 ]
 
 [project.optional-dependencies]

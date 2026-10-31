@@ -141,6 +141,7 @@ def test_init_creates_pyproject_and_vendor_layout(
         "test_markdown_format.py",
         "test_markdownlint.py",
         "test_repo_shared_drift.py",
+        "test_tool_pins.py",
     ):
         vendored = vendor / "tests" / shared_test
         assert vendored.is_file(), f"missing vendored test: {vendored}"

@@ -78,9 +78,10 @@ Bundled skills:
 
 A pytest suite that runs as part of `uv run pytest` and enforces a consistent
 quality bar across every consumer: Python lint + format + strict type-check,
-markdown format + lint. Two smaller gates cover integration sanity -- that the
-consumer's vendored copy hasn't been hand-edited, and that the canonical paths
-still resolve to their upstreams.
+markdown format + lint. Three smaller gates cover integration sanity -- that
+the consumer's vendored copy hasn't been hand-edited, that the canonical paths
+still resolve to their upstreams, and that the consumer leaves the packages
+repo-shared pins free to move.
 
 The delivered tests live in `_repo_shared/tests/`, outside your `tests/` tree,
 so your `tests/conftest.py` doesn't apply to them:
@@ -101,12 +102,19 @@ so your `tests/conftest.py` doesn't apply to them:
   `no-squashed-file-references` rule against several Claude `@<path>` imports
   on one line. Rules come from `.markdownlint.json`.
 
-Plus the two integration sanity checks:
+Plus the three integration sanity checks:
 
 - **`test_repo_shared_drift.py`** -- catches local edits to the vendored
   `_repo_shared/` tree by comparing it against the SHA-pinned package version.
 - **`test_in_sync.py`** -- checks that every canonical path still matches its
   upstream.
+- **`test_tool_pins.py`** -- fails a requirement in your `pyproject.toml` that
+  could reject a newer version of a package repo-shared pins, such as
+  `mypy==2.4.0`, or that ties it to a source or URL, because either would block
+  `upgrade` at the next bump. It also fails an override, which replaces the pin
+  outright. Declare the package without a version or with a lower bound. PEP
+  723 blocks are exempt: they resolve in their own environment. To notice a
+  tool change, set `test-command` and upgrade with `--run-tests`.
 
 The ruff, mypy, and mdformat versions are pinned in repo-shared's own
 `pyproject.toml` and ride along when the consumer pins repo-shared by SHA.
