@@ -246,6 +246,25 @@ def test_status_without_lockfile_reports_no_pin(
     assert "no epilatow-repo-shared pin" in capsys.readouterr().out
 
 
+def test_status_leaves_a_stale_lockfile_alone(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    consumer = _init_consumer(tmp_path)
+    pyproject = consumer / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text() + '\n[dependency-groups]\ndev = ["mypy"]\n'
+    )
+    lockfile = (consumer / "uv.lock").read_bytes()
+    capsys.readouterr()
+
+    exit_code = run_cli(["status", "--repo", str(consumer)])
+
+    assert exit_code == ExitCode.SUCCESS
+    assert "pinned:" in capsys.readouterr().out
+    assert (consumer / "uv.lock").read_bytes() == lockfile
+
+
 def test_status_refuses_outside_git_repo(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -701,6 +720,32 @@ def _setup_consumer_no_origin(consumer: Path, source_url: str) -> str:
 _PLACEHOLDER_SHA = "0" * 40
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["status"],
+        ["upgrade", _PLACEHOLDER_SHA, "--source", LOCAL_SOURCE_URL],
+    ],
+)
+def test_unreadable_lockfile_is_reported_as_uv_found_it(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: list[str],
+) -> None:
+    """A broken lock is an error, not a consumer without a pin."""
+    consumer = _init_consumer(tmp_path)
+    (consumer / "uv.lock").write_text("not a lockfile\n")
+    capsys.readouterr()
+
+    exit_code = run_cli([*command, "--repo", str(consumer)])
+
+    assert exit_code == ExitCode.ERROR
+    captured = capsys.readouterr()
+    assert "uv export failed" in captured.err
+    assert "uv.lock" in captured.err
+    assert "no epilatow-repo-shared pin" not in captured.out + captured.err
+
+
 def test_upgrade_refuses_outside_git_repo(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -968,6 +1013,61 @@ def test_upgrade_delivers_gitignore_past_locally_excluded_wt_link(
     assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
     gitignore = target / f"repo-shared-update-{sha[:7]}" / ".gitignore"
     assert "\n.wt\n" in gitignore.read_text()
+
+
+def test_upgrade_shows_uv_report_for_a_requirements_conflict(
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """A conflict reaches the user in uv's words, with a way to retry."""
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_no_origin(consumer, f"git+file://{fake_source}")
+    # Committed without re-locking, so the upgrade's lock step is the
+    # first to resolve this pin.
+    pyproject = consumer / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text()
+        + '\n[dependency-groups]\ndev = ["mypy==0.0.0"]\n'
+    )
+    git_in(consumer, "add", "pyproject.toml")
+    git_in(consumer, "commit", "-m", "conflicting pin")
+    sha = _add_bump_commit(fake_source)
+    capfd.readouterr()
+
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.ERROR
+    err = capfd.readouterr().err
+    assert "mypy==0.0.0" in err
+    assert "uv lock failed in worktree" in err
+    assert "--force-retry" in err
+
+
+def test_upgrade_keeps_an_unreadable_worktree_until_force_retry(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_source = _clone_fake_source(tmp_path / "fake-source")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _setup_consumer_no_origin(consumer, f"git+file://{fake_source}")
+    sha = _add_bump_commit(fake_source)
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.SUCCESS
+    wt_path = consumer / ".wt" / f"repo-shared-update-{sha[:7]}"
+    (wt_path / "uv.lock").write_text("not a lockfile\n")
+    git_in(wt_path, "add", "uv.lock")
+    git_in(wt_path, "commit", "-m", "corrupt the lock")
+    capsys.readouterr()
+
+    assert _upgrade_to(consumer, sha, fake_source) == ExitCode.ERROR
+    err = capsys.readouterr().err
+    assert "uv export failed" in err
+    assert "--force-retry" in err
+    assert (wt_path / "uv.lock").read_text() == "not a lockfile\n"
+
+    exit_code = _upgrade_to(consumer, sha, fake_source, "--force-retry")
+    assert exit_code == ExitCode.SUCCESS
+    assert cli._read_locked_sha(wt_path) == sha
 
 
 def test_upgrade_base_builds_worktree_on_local_ref(

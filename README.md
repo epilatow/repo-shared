@@ -205,9 +205,10 @@ worktrees don't accumulate Node compilation caches.
 current `.gitignore` doesn't ignore; list such a link in `.git/info/exclude`
 first, with no trailing slash (`/.wt`). It commits the bump on branch
 `repo-shared/update-<short>` (`<short>` is the target's short SHA) in a
-worktree at `<consumer>/.wt/repo-shared-update-<short>`, so rerunning against
-the same target resumes a failed attempt. Without `--push`, merge that branch
-yourself.
+worktree at `<consumer>/.wt/repo-shared-update-<short>`. Rerunning against the
+same target resumes an attempt that reached that commit, such as one whose
+tests failed, unless the base has moved; an attempt that left uncommitted
+changes needs `--force-retry`. Without `--push`, merge that branch yourself.
 
 Useful flags:
 
@@ -230,8 +231,8 @@ Useful flags:
   fast-forwards your local default branch and skips the push.
 
 - `--force-retry` drops a prior update worktree that carries uncommitted
-  changes and rebuilds fresh. Without it, dirty worktrees block the upgrade so
-  debug edits aren't silently dropped.
+  changes or an unreadable lockfile and rebuilds fresh. Without it, those
+  worktrees block the upgrade so debug edits aren't silently dropped.
 
 - `--base <ref>` builds the update on `<ref>` instead of
   `origin/<default-branch>` (or the local default branch when there is no

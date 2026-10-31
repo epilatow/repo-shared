@@ -270,36 +270,54 @@ _LOCKED_SHA_PATTERN = re.compile(
 )
 
 
+class LockReadError(Exception):
+    """``uv export`` could not read a consumer's locked dependencies."""
+
+
 def _read_locked_sha(repo_root: Path) -> str | None:
     """Resolve the SHA epilatow-repo-shared is pinned to in this consumer.
 
-    Shells out to ``uv export --format requirements-txt --no-hashes``
-    rather than parsing ``uv.lock`` ourselves. The lockfile's internal
-    schema drifts across uv releases (``resolved-reference`` vs
-    ``rev`` vs URL ``#<sha>`` fragment vs ``?rev=<sha>`` query); the
-    export output is a stable requirements.txt-style line of the form
-    ``<name> @ git+<url>@<sha>`` regardless of how the lock represents
-    the pin internally. That's the stable surface to depend on.
+    Shells out to ``uv export --frozen --format requirements-txt
+    --no-hashes`` rather than parsing ``uv.lock`` ourselves. The
+    lockfile's internal schema drifts across uv releases
+    (``resolved-reference`` vs ``rev`` vs URL ``#<sha>`` fragment vs
+    ``?rev=<sha>`` query); the export output is a stable
+    requirements.txt-style line of the form ``<name> @ git+<url>@<sha>``
+    regardless of how the lock represents the pin internally. That's
+    the stable surface to depend on. ``--frozen`` keeps this a read:
+    without it ``uv export`` re-resolves, rewriting a stale lock and
+    failing on a requirements conflict.
 
     Returns ``None`` when:
 
-    - the consumer has no ``uv.lock`` (not onboarded),
-    - ``uv export`` fails (uv not on PATH, broken pyproject, etc.), or
+    - the consumer has no ``uv.lock`` (not onboarded), or
     - no ``epilatow-repo-shared @ git+...@<sha>`` line is found in the
-      export (the dep isn't declared, or it's pinned to a non-git
+      export (the dep isn't locked, or it's pinned to a non-git
       source like a wheel or local path).
+
+    Raises ``LockReadError``, carrying uv's report, when ``uv export``
+    fails: the pin is unknown then, not absent.
     """
     if not (repo_root / "uv.lock").is_file():
         return None
     result = sp.run(
-        ["uv", "export", "--format", "requirements-txt", "--no-hashes"],
+        [
+            "uv",
+            "export",
+            "--frozen",
+            "--format",
+            "requirements-txt",
+            "--no-hashes",
+        ],
         cwd=repo_root,
         capture_output=True,
         text=True,
         check=False,
     )
     if result.returncode != 0:
-        return None
+        raise LockReadError(
+            f"uv export failed in {repo_root}:\n{result.stderr.rstrip()}"
+        )
     for line in result.stdout.splitlines():
         match = _LOCKED_SHA_PATTERN.match(line.rstrip())
         if match:
@@ -1117,7 +1135,9 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
     Failed test runs leave the worktree in place for debugging --
     the next ``upgrade`` invocation auto-detects and either
     resumes (target SHA + ff-mergeable) or recreates fresh
-    (the default branch moved on, ff-merge no longer clean).
+    (the default branch moved on, ff-merge no longer clean). A
+    worktree whose lockfile can't be read stops the upgrade until it
+    is repaired or ``--force-retry`` rebuilds it.
     """
     consumer_root = _resolve_consumer_root(args.path)
     refusal = _refuse_when_target_is_source("upgrade", consumer_root)
@@ -1229,7 +1249,8 @@ def _cmd_upgrade(args: argparse.Namespace) -> ExitCode:
         ):
             _eprint(
                 f"worktree at {wt_path} carries the partial state. "
-                "cd in to debug; rerun ``upgrade`` to retry."
+                "cd in to debug; rerun with ``--force-retry`` to start "
+                "over."
             )
             return ExitCode.ERROR
     else:
@@ -1443,12 +1464,23 @@ def _ensure_update_worktree(
             _remove_worktree(consumer_root, wt_path)
             _delete_branch(consumer_root, branch)
         else:
-            wt_sha = _read_locked_sha(wt_path)
+            try:
+                wt_sha = _read_locked_sha(wt_path)
+            except LockReadError as err:
+                if not force_retry:
+                    _eprint(
+                        f"{err}\nrefusing to recreate {wt_path}: its "
+                        "lockfile can't be read. Repair it there, or "
+                        "pass --force-retry."
+                    )
+                    return ExitCode.ERROR
+                wt_sha = None
             ff = _git_branch_ff_mergeable(consumer_root, branch, upstream_ref)
             if wt_sha == target_sha and ff:
                 return "resume"
-            # Stale: target SHA mismatch or the default branch moved
-            # past the branch's parent. Drop and recreate.
+            # Stale: target SHA mismatch, the default branch moved past
+            # the branch's parent, or a force-retried unreadable lock.
+            # Drop and recreate.
             _remove_worktree(consumer_root, wt_path)
             _delete_branch(consumer_root, branch)
     elif branch_exists and not worktree_exists:
@@ -1504,12 +1536,27 @@ def _do_inner_upgrade(
         ).returncode
         != 0
     ):
-        _eprint("uv add (lock bump) failed in worktree.")
+        _eprint("uv add failed in worktree.")
+        return 1
+
+    # ``--frozen`` above only records the new pin, so this is the step
+    # that finds a conflict with the consumer's own requirements. uv's
+    # report stays on the terminal.
+    if (
+        sp.run(
+            ["uv", "lock"],
+            cwd=wt_path,
+            check=False,
+            timeout=sp.LONG_TIMEOUT_SECONDS,
+        ).returncode
+        != 0
+    ):
+        _eprint("uv lock failed in worktree; uv's report is above.")
         return 1
 
     new_sha = _read_locked_sha(wt_path)
     if new_sha is None:
-        _eprint("could not read SHA from worktree's uv.lock.")
+        _eprint("worktree's uv.lock has no git pin for epilatow-repo-shared.")
         return 1
 
     revendor = sp.run(
@@ -2051,9 +2098,10 @@ def args_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "if an existing update worktree carries uncommitted "
-            "changes, drop it anyway and recreate fresh on the upgrade "
-            "base. Without this, dirty worktrees block the upgrade so "
-            "debug edits aren't silently dropped."
+            "changes or an unreadable lockfile, drop it anyway and "
+            "recreate fresh on the upgrade base. Without this, those "
+            "worktrees block the upgrade so debug edits aren't "
+            "silently dropped."
         ),
     )
     p_up.add_argument(
@@ -2181,6 +2229,9 @@ def main(args: argparse.Namespace) -> ExitCode:
             f"subprocess timed out after {err.timeout}s: {err.cmd!r}",
         )
         return ExitCode.TIMEOUT
+    except LockReadError as err:
+        _eprint(str(err))
+        return ExitCode.ERROR
 
 
 def cli() -> int:
