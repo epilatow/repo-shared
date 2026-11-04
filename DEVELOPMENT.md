@@ -33,7 +33,7 @@ upstream is only a placeholder.
 ```bash
 uv run --extra test pytest shared/tests     # development: shared gates
 uv run --extra test pytest tests/test_vendor.py # focused example
-uv run --extra test pytest                  # final full run before landing
+uv run --extra test pytest                  # full suite
 ```
 
 [Testing](DEVELOPMENT_SHARED.md#testing) says which to run when. `testpaths`
