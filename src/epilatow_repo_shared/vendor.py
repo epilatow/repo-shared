@@ -520,13 +520,13 @@ def vendor(consumer_root: Path) -> VendorResult:
                     # Not present -- seed the copy on first sight.
                     _copy_file(src, link_path)
                     result.seeded.append(link_path)
-            elif not _is_correct_symlink(link_path, vendor_path):
-                if not (link_path.is_symlink() or link_path.exists()):
-                    _create_symlink(link_path, vendor_path)
-                    result.installed.append(link_path)
-                # else: consumer has a local file (or wrong-target
-                # symlink) shadowing the canonical path -- left for
-                # ``check_in_sync`` to record.
+            elif not _is_correct_symlink(link_path, vendor_path) and not (
+                link_path.is_symlink() or link_path.exists()
+            ):
+                _create_symlink(link_path, vendor_path)
+                result.installed.append(link_path)
+            # Local files and wrong-target symlinks are left for
+            # ``check_in_sync`` to record.
 
         # Write the new upstream to ``vendor_path`` last (see the
         # restartability comment above).
